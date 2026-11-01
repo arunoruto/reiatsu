@@ -167,7 +167,7 @@ def test_survey_capture_guidance_and_calibration(tmp_path):
     status, cap = call("api/survey/capture")
     assert not cap["capture"]["done"] and cap["capture"]["receivers"]["kitchen"]["n"] == 3 and "bedroom" in cap["capture"]["silent"]
     time.sleep(0.35)
-    assert call("api/survey/capture")[1]["capture"] == {"done": True, "saved": True, "id": app.survey.entries[0]["id"]}
+    assert call("api/survey/capture")[1]["capture"] == {"done": True, "saved": True, "id": app.survey.entries[0]["id"], "few": ["kitchen"]}
     assert call(f"api/survey/{app.survey.entries[0]['id']}", "DELETE")[1] == {"deleted": True}
     assert call("api/calibrate", "POST")[0] == 400  # not enough points
 
@@ -181,6 +181,9 @@ def test_survey_capture_guidance_and_calibration(tmp_path):
         rssi = truth.hear(truth.mean(plan, here) - truth.body(plan, here, np.linspace(0, 2 * np.pi, 25)), rng)
         samples = {ids[r]: row[~np.isnan(row)].tolist() for r, row in enumerate(rssi)}
         app.survey.entries.append({"id": str(i), "device": "phone", "x": float(p[0]), "y": float(p[1]), "held": "hand", "samples": samples})
+        if i % 4 == 0:  # the same spot with the phone lying down: no body shadowing, ~6 dB stronger
+            flat = {r: [v + truth.body_db / 2 for v in vals] for r, vals in samples.items()}
+            app.survey.entries.append({"id": f"s{i}", "device": "phone", "x": float(p[0]), "y": float(p[1]), "held": "surface", "samples": flat})
     status, st = call("api/survey")
     assert status == 200 and st["next"]["phase"] == "active" and st["next"]["starter_left"] == 0
     assert st["loo"]["room_acc"] > 0.7 and all(pt["residual"] is not None for pt in st["points"])
@@ -188,6 +191,7 @@ def test_survey_capture_guidance_and_calibration(tmp_path):
     status, prev = call("api/calibrate", "POST")
     assert status == 200 and prev["after"]["room_acc"] > 0.7
     assert prev["after"]["rssi_err_db"] < prev["before"]["rssi_err_db"]  # priors vs fitted (left out)
+    assert abs(prev["params"]["offset phone (surface)"][1] - truth.body_db / 2) < 2  # own offset, hand fit unbiased
     assert call("api/calibrate/apply", "POST")[1] == {"ok": True} and len(saved) == 1
     cal = json.loads((tmp_path / "calibration.json").read_text())
     assert abs(cal["n"] - truth.params.n) < 0.3

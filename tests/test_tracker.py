@@ -111,3 +111,29 @@ def test_single_weak_receiver_stays_uncertain(world):
             est = t.step(ts, {"living_room": -87.0})
         assert max(est.room_probs.values()) < 0.75, est.room_probs
     assert offline.belief == pytest.approx(alone.belief)
+
+
+def test_reference_device_ignores_mmwave(world):
+    # a door lock is nobody's phone: occupancy says where people are, not where it is
+    plan, grid, mu, kernel = world
+    ids = [r.id for r in plan.receivers]
+    runs = {}
+    for occupied in (False, True):
+        loc = Locator(lambda: Tracker(grid, mu, ids, kernel), static={"lock"})
+        if occupied:
+            loc.set_occupancy(Occupancy(0, "Living Room", True))
+            loc.set_occupancy(Occupancy(0, "Hallway", False))
+        for ts in range(1, 121):
+            loc.advert(Advert(ts - 0.5, "hallway", "lock", -62.0))
+            loc.advert(Advert(ts - 0.5, "kitchen", "lock", -75.0))
+            if occupied and ts == 60:
+                loc.set_occupancy(Occupancy(ts, "Bedroom", True))
+            est = loc.tick(ts)[0]
+        runs[occupied] = (loc.trackers["lock"].belief, est)
+    assert runs[True][0] == pytest.approx(runs[False][0])
+    assert not loc.trackers["lock"].carried
+    # and it doesn't drift: without new adverts its belief stays put
+    t = loc.trackers["lock"]
+    before = t.belief.copy()
+    t.step(400, {})
+    assert np.abs(t.belief - before).sum() < 0.1

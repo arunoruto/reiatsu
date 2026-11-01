@@ -10,13 +10,13 @@
 :root {
   --bg: #f6f6f4; --panel: #ffffff; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
   --accent: #2463eb; --danger: #c62828; --ok: #2e7d32; --map: #ecebe6;
-  --room: #2463eb; --occupied: #f59e0b; --heat: 234, 88, 12;
+  --room: #2463eb; --occupied: #0891b2; --heat: 234, 88, 12;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #161615; --panel: #1f1f1d; --fg: #ececea; --muted: #9a9a94; --line: #3a3a36;
     --accent: #6c9bff; --danger: #ef6b6b; --ok: #66bb6a; --map: #232321;
-    --room: #6c9bff; --occupied: #fbbf24;
+    --room: #6c9bff; --occupied: #22d3ee;
   }
 }
 * { box-sizing: border-box; }
@@ -67,6 +67,12 @@ td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line
 .lbl { background: transparent; border: 0; box-shadow: none; color: var(--fg); font-weight: 600; font-size: 12px; }
 .lbl::before { display: none; }
 .heat { image-rendering: pixelated; }
+.person { font-size: 18px; line-height: 1; filter: drop-shadow(0 0 2px var(--map)); }
+.est span { color: var(--accent); }
+.err-lbl { background: var(--panel); color: var(--fg); border: 1px solid var(--line); font-size: 11px; padding: 0 4px; }
+.err-lbl::before { display: none; }
+.devbadge { background: var(--panel); color: var(--fg); padding: 6px 10px; border-radius: 6px; box-shadow: 0 1px 4px #0003; font-size: 14px; }
+.devbadge:empty { display: none; }
 .pin { width: 18px !important; height: 18px !important; margin: -9px 0 0 -9px !important; border-radius: 50%;
   border: 2px solid #fff; box-shadow: 0 0 0 1px #0006; background: #888; }
 .pin.rx { background: var(--muted); }
@@ -86,7 +92,7 @@ td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line
 .target { font-size: 18px; margin: 4px 0; }
 button.big { width: 100%; min-height: 52px; font-size: 18px; }
 #save:not(:disabled)::after { content: " •"; }
-.legend { background: var(--panel); color: var(--fg); padding: 4px 8px; border-radius: 6px; font-size: 12px; box-shadow: 0 1px 4px #0003; max-width: 220px; }
+.legend { background: var(--panel); color: var(--fg); padding: 4px 8px; border-radius: 6px; font-size: 12px; box-shadow: 0 1px 4px #0003; max-width: 340px; }
 .legend summary { cursor: pointer; font-weight: 600; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
 @media (pointer: coarse) {
@@ -136,6 +142,7 @@ let undoStack = [], redoStack = [], lastState = null;
 let surveyState = null, surveyError = null, capture = null, here = null, calPreview = null, captureTimer = null;
 const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 let surveyDevice = store.get("reiatsu.surveyDevice", ""), held = store.get("reiatsu.held", "hand");
+const HELD = { hand: "In hand", pocket: "In pocket", surface: "Lying down" };
 let freePoint = store.get("reiatsu.freePoint", "") === "1";  // survey: measure anywhere instead of following targets
 
 const map = L.map("map", { crs: L.CRS.Simple, minZoom: -3, maxZoom: 8, zoomSnap: 0.25, attributionControl: false });
@@ -147,16 +154,22 @@ for (const k of ["bg", "heat", "rooms", "walls", "doors", "rx", "refs", "survey"
 const legend = L.control({ position: "bottomleft" });
 legend.onAdd = () => {
   const d = L.DomUtil.create("div", "legend");
-  d.innerHTML = `<details><summary>Legend</summary>
+  d.innerHTML = `<details ${window.innerWidth > 800 ? "open" : ""}><summary>Legend</summary>
     <div><i style="background:var(--ok)"></i>receiver online · <i style="background:var(--danger)"></i>offline · <i style="background:var(--muted)"></i>unknown</div>
     <div><i style="background:#9333ea;border-radius:2px"></i>reference device · <i style="background:var(--ok);border-radius:2px"></i>door</div>
     <div>survey point fit: <i style="background:#16a34a"></i>&lt;4 dB <i style="background:#eab308"></i>&lt;8 <i style="background:#dc2626"></i>worse</div>
     <div>walls: ${Object.entries(MAT_COLOR).map(([m, c]) => `<i style="background:${c};border-radius:0"></i>${m}`).join(" ")}</div>
-    <div><i style="background:var(--accent)"></i>estimate, circle = σ · orange = probability</div></details>`;
+    <div><i style="background:var(--accent)"></i>estimate "(est.)", circle = σ; dashed line = error to its reference</div>
+    <div><i style="background:rgb(var(--heat))"></i>where the device probably is (heatmap)</div>
+    <div>🧍 + dashed outline: mmWave sees someone in the room</div></details>`;
   L.DomEvent.disableClickPropagation(d);
   return d;
 };
 legend.addTo(map);
+const badge = L.control({ position: "topright" });
+let devBadge;
+badge.onAdd = () => (devBadge = L.DomUtil.create("div", "devbadge"));
+badge.addTo(map);
 
 async function api(path, opts = {}) {
   const r = await fetch(path, opts);
@@ -369,10 +382,15 @@ function drawRooms() {
   for (const [name, poly] of Object.entries(plan.rooms)) {
     const isSel = mode === "rooms" && sel === name, occupied = mode === "live" && occ[name];
     const layer = L.polygon(poly.map(([x, y]) => ll(x, y)), {
-      color: css("--room"), weight: isSel ? 2 : 1, opacity: 0.7,
-      fillColor: css(occupied ? "--occupied" : "--room"), fillOpacity: occupied ? 0.3 : isSel ? 0.15 : 0.05,
+      color: css(occupied ? "--occupied" : "--room"), weight: occupied ? 3 : isSel ? 2 : 1, opacity: occupied ? 1 : 0.7,
+      dashArray: occupied ? "8 6" : null, fillColor: css("--room"), fillOpacity: isSel ? 0.15 : 0.05,
       interactive: mode === "rooms",
     });
+    if (occupied) {
+      // person icon in the room's top-left corner: mmWave sees someone here
+      const [x0, , , y1] = roomBox({ rooms: { r: poly } });
+      L.marker(ll(x0 + 0.35, y1 - 0.35), { icon: L.divIcon({ className: "person", html: "🧍", iconSize: [18, 18] }), interactive: false, pmIgnore: true }).addTo(layers.rooms);
+    }
     layer.bindTooltip(esc(name), { permanent: true, direction: "center", className: "lbl" });
     layer.on("click", (e) => { L.DomEvent.stop(e); sel = name; drawRooms(); renderPanel(); });
     layer.addTo(layers.rooms);
@@ -454,6 +472,7 @@ function drawMarkers() {
 function drawLive() {
   layers.heat.clearLayers();
   layers.est.clearLayers();
+  devBadge.innerHTML = "";
   if (mode !== "live" || !device) return;
   const cells = derived?.cells || [], belief = live.belief, res = derived?.res || 0.2;
   if (showHeat && belief && belief.length === cells.length && cells.length) {
@@ -476,7 +495,16 @@ function drawLive() {
   if (d) {
     L.circle(ll(d.x, d.y), { radius: Math.max(d.sigma, 0.1), color: css("--accent"), weight: 1, fillOpacity: 0.08, interactive: false, pmIgnore: true }).addTo(layers.est);
     L.circleMarker(ll(d.x, d.y), { radius: 5, color: "#fff", weight: 2, fillColor: css("--accent"), fillOpacity: 1, interactive: false, pmIgnore: true }).addTo(layers.est);
+    L.marker(ll(d.x, d.y), { icon: L.divIcon({ className: "est", html: `<span style="position:absolute;left:8px;top:-8px;white-space:nowrap;font-size:11px;font-weight:600">${esc(device)} (est.)</span>`, iconSize: [0, 0] }), interactive: false, pmIgnore: true }).addTo(layers.est);
+    const ref = plan.references.find((r) => r.device === device);
+    if (ref) {
+      const err = Math.hypot(d.x - ref.x, d.y - ref.y);
+      L.polyline([ll(d.x, d.y), ll(ref.x, ref.y)], { color: css("--accent"), weight: 1.5, dashArray: "3 4", interactive: false, pmIgnore: true })
+        .bindTooltip(`${err.toFixed(1)} m`, { permanent: true, direction: "center", className: "err-lbl" }).addTo(layers.est);
+    }
   }
+  const p = d && Object.entries(d.room_probs).sort((a, b) => b[1] - a[1])[0];
+  devBadge.innerHTML = device ? `<b>${esc(device)}</b>${d ? `: ${esc(d.room)}${p ? ` (${(p[1] * 100).toFixed(0)}%)` : ""}` : ": no estimate yet"}` : "";
 }
 
 // --- panel ------------------------------------------------------------------
@@ -609,7 +637,8 @@ const PANELS = {
     if (c && !c.done) {
       const rows = Object.entries(c.receivers).map(([rx, v]) => `<tr><td>${esc(rx)}</td><td>${v.n}</td><td>${v.median == null ? "–" : v.median.toFixed(0) + " dBm"}</td></tr>`).join("");
       return `<div class="count">${Math.max(0, Math.ceil(c.remaining))} s</div>
-        <p style="text-align:center">Turn slowly once, holding <b>${esc(c.device)}</b> the way you normally do.</p>
+        <p style="text-align:center">${c.held === "surface" ? `Keep the screen of <b>${esc(c.device)}</b> on and leave it lying.` : `Turn slowly once, holding <b>${esc(c.device)}</b> the way you normally do.`}</p>
+        ${c.seconds - c.remaining > c.seconds / 2 && Object.values(c.receivers).some((v) => v.n > 0 && v.n < 10) ? '<p class="hint"><b>Few adverts</b> so far: keep the screen on (a locked phone advertises rarely).</p>' : ""}
         <table><tr><th>receiver</th><th>adverts</th><th>median</th></tr>${rows}</table>
         ${c.silent.length ? `<p class="hint">Not heard yet: ${c.silent.map(esc).join(", ")}</p>` : ""}
         <div class="row"><button class="danger big" data-act="cancel-capture">Cancel</button></div>`;
@@ -625,7 +654,7 @@ const PANELS = {
         <p class="hint">Point ${t.done + 1} of ~${t.total}${t.phase === "active" ? " · extra points where the map is least certain" : ""}. Stand on the pulsing target, or drag the blue marker (or tap the map) to where you really are. Not where the target is? Use <i>Measure anywhere</i>.</p>`;
     h += `
 <div class="row"><label>Device</label><select data-act="survey-device">${devs.map((d) => `<option ${d === surveyDevice ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
-      <div class="row"><label>Held</label><select data-act="held">${["hand", "pocket"].map((v) => `<option ${v === held ? "selected" : ""}>${v}</option>`).join("")}</select>
+      <div class="row"><label>Phone</label><select data-act="held">${Object.entries(HELD).map(([v, label]) => `<option value="${v}" ${v === held ? "selected" : ""}>${label}</option>`).join("")}</select>
         <label style="min-width:0">for</label><input type="number" min="10" max="120" step="5" data-act="seconds" value="${store.get("reiatsu.seconds", 30)}"> s</div>
       <div class="row"><button class="primary big" data-act="start-capture" ${devs.length && here ? "" : "disabled"}>Start${freePoint ? " here" : ""}</button></div>
       <h3>Progress</h3><p>${s.points.length} point(s) · room accuracy ${loo.room_acc == null ? "–" : (loo.room_acc * 100).toFixed(0) + "%"}${loo.err_m == null ? "" : ` · median error ${loo.err_m.toFixed(1)} m`}</p>
@@ -633,7 +662,7 @@ const PANELS = {
     if (s.plateau) h += `<p><b>Good enough:</b> accuracy has stopped improving. Calibrate and stop, or add points where it still guesses wrong.</p>`;
     const [kind, id] = splitKey(sel);
     const pt = kind === "pt" && s.points.find((p) => p.id === id);
-    if (pt) h += `<h3>Point</h3><p>${esc(pt.device)} (${esc(pt.held)}) at ${pt.x} / ${pt.y} · heard by ${pt.heard} · fit ${pt.residual == null ? "–" : pt.residual + " dB"}</p>
+    if (pt) h += `<h3>Point</h3><p>${esc(pt.device)} (${esc(HELD[pt.held] || pt.held)}) at ${pt.x} / ${pt.y} · heard by ${pt.heard} · fit ${pt.residual == null ? "–" : pt.residual + " dB"}</p>
       <div class="row"><button class="danger" data-act="del-point">Delete point</button></div>`;
     h += `<h3>Calibrate</h3><div class="row"><button data-act="calibrate" ${s.points.length < 3 ? "disabled" : ""}>Fit${s.calibrated ? " again" : ""}…</button>${s.calibrated ? '<span class="badge on">calibrated</span>' : ""}</div>
       <p class="hint">Fits receiver power, path loss and wall losses to the survey points and reference devices.</p>`;
@@ -725,7 +754,11 @@ $("#panel").addEventListener("change", async (e) => {
   const t = e.target, act = t.dataset.act;
   if (act === "device") { device = t.value; poll(); }
   else if (act === "survey-device") { surveyDevice = t.value; store.set("reiatsu.surveyDevice", t.value); }
-  else if (act === "held") { held = t.value; store.set("reiatsu.held", t.value); }
+  else if (act === "held") {
+    held = t.value; store.set("reiatsu.held", t.value);
+    // a phone lying still advertises less once its screen locks: give it longer
+    if (held === "surface" && +store.get("reiatsu.seconds", 30) < 45) { store.set("reiatsu.seconds", 45); renderPanel(); }
+  }
   else if (act === "seconds") store.set("reiatsu.seconds", t.value);
   else if (act === "heat") { showHeat = t.checked; drawLive(); }
   else if (act === "max-gap") { plan.max_gap = +t.value || 0.4; changed({ rooms: false }); }
@@ -893,7 +926,7 @@ async function startCapture() {
         const { capture: c } = await api("api/survey/capture");
         if (!c || c.done) {
           stopCapture();
-          flash(c?.saved ? "Point saved" : c?.error || "Capture ended", !c?.saved);
+          flash(c?.saved ? (c.few?.length ? `Point saved, but few adverts from ${c.few.join(", ")}: keep the screen on` : "Point saved") : c?.error || "Capture ended", !c?.saved || !!c.few?.length);
           if (navigator.vibrate) navigator.vibrate(200);
           loadSurvey();
           return;

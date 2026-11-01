@@ -69,6 +69,9 @@ class Tracker:
     # Per heard step, old evidence decays: readings of a device that doesn't move repeat the
     # same shadowing/map error, so they saturate instead of piling up into false certainty.
     evidence_forget: float = 0.1
+    # False for a device nobody carries (a door lock): it doesn't move, and mmWave, which
+    # sees people, says nothing about it.
+    carried: bool = True
 
     def __post_init__(self):
         if self.kernel is None:
@@ -90,6 +93,8 @@ class Tracker:
 
     def set_occupancy(self, area: str, occupied: bool):
         self.occupancy[area] = occupied
+        if not self.carried:
+            return
         f, miss, other = np.ones(len(self.grid.xy)), self.mmwave_fnr, self.mmwave_p_other
         for name, occ in self.occupancy.items():
             mask = self.grid.areas[name]
@@ -108,8 +113,9 @@ class Tracker:
         ticks = int(round(ts - self.ts))
         for k in range(min(ticks, MAX_SILENT_TICKS)):
             silent = self.heard_ts is None or self.ts + k - self.heard_ts > self.silent_after
-            p = self.p_move_silent if silent else self.p_move
-            b = (1 - p) * self.belief + p * (self.kernel @ self.belief) + self.p_jump / len(self.belief)
+            p = 0.0 if not self.carried else self.p_move_silent if silent else self.p_move
+            jump = self.p_jump if self.carried else self.p_jump / 100  # a lock isn't carried off
+            b = (1 - p) * self.belief + p * (self.kernel @ self.belief) + jump / len(self.belief)
             b *= self._occ_factor
             self.belief = b / b.sum()
         self.ts += ticks

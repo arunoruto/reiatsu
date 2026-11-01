@@ -31,6 +31,7 @@ CALIBRATION = "calibration.json"
 P_DROP = 0.1
 ACTIVE_POINTS = 10  # planner points after the starter set, for the progress estimate
 DONE_DIST = 0.75  # a starter target this close to a captured point counts as done
+FEW_ADVERTS = 10  # per receiver and point; fewer makes the median shaky
 REFERENCE_WINDOW = 600.0  # seconds of a reference device's adverts used for calibration
 
 
@@ -57,7 +58,10 @@ def n_sent(samples: dict[str, list[float]]) -> int:
 
 def to_point(entry: dict, receivers: list[str]) -> SurveyPoint:
     p = summarize([entry["x"], entry["y"]], entry["samples"], n_sent(entry["samples"]), receivers, P_DROP)
-    p.z, p.device = entry.get("z", 1.0), entry["device"]
+    # each (device, phone position) gets its own fitted offset: a phone lying on a table
+    # misses the body shadowing a held one has, a pocket adds more
+    held = entry.get("held", "hand")
+    p.z, p.device = entry.get("z", 1.0), entry["device"] if held == "hand" else f"{entry['device']} ({held})"
     return p
 
 
@@ -101,12 +105,13 @@ class Survey:
                     return {"done": True, "saved": False, "error": f"no adverts from {c.device} were heard"}
                 self.entries.append(entry)
                 self._write()
-                return {"done": True, "saved": True, "id": entry["id"]}
+                few = sorted(r for r in receivers if 0 < len(c.samples.get(r, [])) < FEW_ADVERTS)
+                return {"done": True, "saved": True, "id": entry["id"], "few": few}
             samples = {r: list(v) for r, v in c.samples.items()}
         per_rx = {r: {"n": len(samples.get(r, [])), "median": float(np.median(samples[r])) if samples.get(r) else None} for r in sorted(set(receivers) | set(samples))}
         return {
             "done": False, "device": c.device, "x": c.x, "y": c.y,
-            "remaining": round(c.t_end - time.time(), 1), "seconds": c.seconds,
+            "remaining": round(c.t_end - time.time(), 1), "seconds": c.seconds, "held": c.held,
             "receivers": per_rx, "silent": [r for r in receivers if not samples.get(r)],
         }  # fmt: skip
 

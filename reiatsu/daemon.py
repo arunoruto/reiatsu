@@ -84,26 +84,27 @@ def track(events: Iterable[tuple[float, Event | None]], locator: Locator, emit: 
             locator.set_receivers(ev)
 
 
-def tracker_factory(src: str | dict, folder: Path | None = None) -> tuple[Callable[[], Tracker] | None, set[str]]:
-    """Plan (path or dict) -> tracker factory and receiver ids; None while the plan has no rooms.
+def tracker_factory(src: str | dict, folder: Path | None = None) -> tuple[Callable[[], Tracker] | None, set[str], set[str]]:
+    """Plan (path or dict) -> tracker factory (None while the plan has no rooms), receiver ids,
+    and the devices nobody carries (the reference devices).
 
     Uses calibration.json from ``folder`` (default: the plan's folder) if there is one,
     else the channel priors with any per-receiver p0 overrides.
     """
     plan = load_plan(src)
     if not plan.rooms:
-        return None, set()
+        return None, set(), set()
     grid = make_grid(plan)
     folder = folder or (Path(src).parent if not isinstance(src, dict) else None)
     cal = load_calibration(folder, plan) if folder else None
     mu = cal.predict(plan, grid.xy) if cal else predict(plan, ChannelParams.prior(plan), grid.xy)
     kernel, ids = motion_kernel(grid), [r.id for r in plan.receivers]
-    return (lambda: Tracker(grid, mu, ids, kernel)), set(ids)
+    return (lambda: Tracker(grid, mu, ids, kernel)), set(ids), set(plan.references)
 
 
 def build_locator(src: str | dict) -> tuple[Locator, set[str]]:
-    factory, ids = tracker_factory(src)
-    return Locator(factory), ids
+    factory, ids, static = tracker_factory(src)
+    return Locator(factory, static), ids
 
 
 def state(e: Estimate) -> dict:
@@ -193,8 +194,8 @@ def live(args, locator: Locator, receivers: set[str]):
                 yield time.time(), None
                 continue
             if topic == RELOAD:
-                factory, ids = payload
-                locator.reset(factory)
+                factory, ids, static = payload
+                locator.reset(factory, static)
                 receivers.clear()
                 receivers.update(ids)
                 warned.clear()

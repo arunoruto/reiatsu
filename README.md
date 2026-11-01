@@ -281,14 +281,18 @@ starts empty and you draw the plan in the UI.
   during the 30 s while the panel shows per-receiver advert counts and medians. Points
   are coloured by how well the current model fits them. Progress shows the
   leave-one-out room accuracy, with a "good enough" hint once it stops improving.
-  *Measure anywhere* skips the targets: tap where you stand and press Start.
+  *Measure anywhere* skips the targets: tap where you stand and press Start. Pick how
+  you hold the phone (in hand, in pocket, lying down); each position gets its own
+  fitted offset, since a phone lying on a table misses the body shadowing.
 * **Calibrate** (in Survey): fits receiver power, path-loss exponent and wall losses to
   the survey points and the reference devices' last 10 minutes of adverts. Each extra
   device gets its own transmit offset. It shows now vs fitted (leave-one-out); *Apply*
   writes `calibration.json` (keeping `.bak`) and restarts tracking with it.
-* **Live**: per device, the probability heatmap, the estimate with its σ circle, room
-  probabilities, every receiver's online state and last RSSI, and the rooms whose mmWave
-  sensor reports occupied.
+* **Live**: per device, the probability heatmap, the labelled estimate with its σ circle
+  (and a line to its reference spot with the error, if it has one), room probabilities,
+  every receiver's online state and last RSSI, and rooms where mmWave sees someone
+  (dashed outline and 🧍). Reference devices count as not carried: they don't move,
+  and mmWave, which sees people, doesn't affect them.
 
 Saving writes the plan YAML (keeping `plan.yaml.bak`) and restarts tracking on the new
 plan. The YAML stays the source of truth, but comments in it don't survive a save from

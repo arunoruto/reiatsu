@@ -34,17 +34,20 @@ class Receivers:
 class Locator:
     """One tracker per device. Call :meth:`tick` about once per second."""
 
-    def __init__(self, new_tracker: Callable[[], Tracker] | None):
-        """``new_tracker`` None: no plan yet, adverts are dropped."""
+    def __init__(self, new_tracker: Callable[[], Tracker] | None, static: set[str] = frozenset()):
+        """``new_tracker`` None: no plan yet, adverts are dropped. ``static``: devices nobody
+        carries (reference devices), tracked without motion or mmWave."""
         self.new_tracker = new_tracker
+        self.static = set(static)
         self.trackers: dict[str, Tracker] = {}
         self.occupancy: dict[str, bool] = {}
         self.listening: set[str] | None = None  # None: assume every receiver in the plan is online
         self._buf: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
-    def reset(self, new_tracker: Callable[[], Tracker] | None):
+    def reset(self, new_tracker: Callable[[], Tracker] | None, static: set[str] = frozenset()):
         """New plan: start every device over."""
         self.new_tracker = new_tracker
+        self.static = set(static)
         self.trackers.clear()
         self._buf.clear()
 
@@ -68,6 +71,7 @@ class Locator:
         for dev in sorted(set(self._buf) | set(self.trackers)):
             if dev not in self.trackers:
                 self.trackers[dev] = t = self.new_tracker()
+                t.carried = dev not in self.static
                 for area, occ in self.occupancy.items():
                     t.set_occupancy(area, occ)
                 if self.listening is not None:
