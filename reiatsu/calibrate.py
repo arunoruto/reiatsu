@@ -146,7 +146,8 @@ def _rows(plan: Plan, points: list[SurveyPoint], links: list[NodeLink]):
 def _fit_params(plan, rows, walls, sigma, sensitivity) -> ChannelParams:
     R, mats = len(plan.receivers), plan.materials if walls else []
     M = len(mats)
-    mean = np.r_[np.full(R, P0_PRIOR[0]), N_PRIOR[0], [LOSS_PRIOR[m][0] for m in mats], TX_OFFSET_PRIOR[0]]
+    p0 = [P0_PRIOR[0] if r.p0 is None else r.p0 for r in plan.receivers]
+    mean = np.r_[p0, N_PRIOR[0], [LOSS_PRIOR[m][0] for m in mats], TX_OFFSET_PRIOR[0]]
     sd = np.r_[np.full(R, P0_PRIOR[1]), N_PRIOR[1], [LOSS_PRIOR[m][1] for m in mats], TX_OFFSET_PRIOR[1]]
     counts = rows["counts"][:, [plan.materials.index(m) for m in mats]] if M else np.zeros((len(rows["y"]), 0))
     heard = ~np.isnan(rows["y"])

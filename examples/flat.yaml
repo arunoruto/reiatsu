@@ -1,6 +1,8 @@
-# Single-floor flat, metres. Rooms are polygons or [x0, y0, x1, y1] rectangles.
-# Walls are derived: parallel edges of two rooms closer than max_gap become one
-# interior wall on their midline; all other edges are exterior walls.
+# The real flat, as far as it is known. Single floor, metres, x right, y down
+# (image convention, so a scanned floor plan overlays directly in the web UI).
+# Rooms are polygons or [x0, y0, x1, y1] rectangles. Walls are derived: parallel
+# edges of two rooms closer than max_gap become one interior wall on their
+# midline; all other edges are exterior walls.
 max_gap: 0.4
 
 rooms:
@@ -15,29 +17,31 @@ materials:          # defaults for derived walls
   interior: drywall
   exterior: brick
 
-walls:              # per room-pair material overrides (guesses, edit me)
+walls:              # material overrides: two rooms = their shared wall, one room = its exterior walls
   - rooms: [Bathroom, Kitchen]
-    material: brick
+    material: brick       # guess
   - rooms: [Bedroom, Living Room]
-    material: concrete
+    material: concrete    # guess
 
-# Door positions are guesses: every room opens to the hallway.
-# `at` is optional (default: centre of the longest shared wall).
+# Interior door positions are guesses: every room opens to the hallway.
+# A door with one room is a door to the outside.
 doors:
+  - {rooms: [Hallway], at: [0, 4.0], width: 0.9}           # entrance, left end of the hallway
   - {rooms: [Hallway, Bathroom], at: [0.8, 3.33], width: 0.7}
   - {rooms: [Hallway, Kitchen], at: [2.8, 3.32], width: 0.8}
   - {rooms: [Hallway, Work], at: [5.0, 3.5], width: 0.8}
   - {rooms: [Hallway, Bedroom], at: [6.96, 4.1], width: 0.8}
   - {rooms: [Hallway, Living Room], at: [6.3, 4.77], width: 0.9}
 
-receivers:
-  - {id: living_room, x: 5.57, y: 9.65, z: 1.0, room: Living Room}
-  - {id: bedroom, x: 10.57, y: 0.0, z: 1.0, room: Bedroom}
-  - {id: kitchen, x: 1.7, y: 3.26, z: 1.0, room: Kitchen}
-  - {id: work, x: 6.89, y: 0.0, z: 1.0, room: Work}
-  - {id: bathroom, x: 1.57, y: 3.27, z: 1.0, room: Bathroom}
-  - {id: hallway, x: 3.45, y: 4.08, z: 1.0, room: Hallway}
+# Receiver ids are the bridge's: ha_usb, lego_space_age, lego_milkyway. Their
+# positions are not known yet: place them in the web UI. Fields: id, x, y,
+# z (default 1.0), optional room (default: the room at x, y) and p0 (dBm at 1 m,
+# overrides the prior, e.g. for an adapter inside a cabinet).
+# The Stromleser (ESP32-C3 meter reader, hallway wall opposite the bathroom door,
+# about (0.8, 4.6)) sits inside a metal breaker box: not used as a receiver.
+receivers: []
 
-# Optional sub-room areas for mmWave zone sensors (Aqara FP2 style).
-zones:
-  Desk: [5.2, 0.2, 6.7, 1.4]
+# Stationary tracked devices at known spots: ground truth for the live error
+# and, later, calibration labels.
+references:
+  - {device: nuki, x: 0.1, y: 4.0}    # Nuki lock on the entrance door

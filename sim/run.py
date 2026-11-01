@@ -22,9 +22,8 @@ from reiatsu.tracker import Tracker, motion_kernel
 
 from . import world
 
-ROOT = Path(__file__).resolve().parent.parent
 EXPECTED = Path(__file__).with_name("expected.json")
-FLAT = ROOT / "examples/flat.yaml"
+FLAT = Path(__file__).with_name("flat.yaml")  # frozen benchmark plan; examples/ holds the real flat
 # The real flat: mmWave in four rooms (none in bedroom and work), a second,
 # untracked resident who also triggers the sensors, occasional false alarms.
 REAL_SENSORS = dict(mmwave_rooms=["Bathroom", "Hallway", "Kitchen", "Living Room"], second_person=True, fp_per_hour=1.0)

@@ -1,0 +1,43 @@
+# Single-floor flat, metres. Rooms are polygons or [x0, y0, x1, y1] rectangles.
+# Walls are derived: parallel edges of two rooms closer than max_gap become one
+# interior wall on their midline; all other edges are exterior walls.
+max_gap: 0.4
+
+rooms:
+  Bathroom: [0, 0, 1.57, 3.27]
+  Kitchen: [1.7, 0, 3.85, 3.26]
+  Work: [3.98, 0, 6.89, 3.45]
+  Hallway: [[0, 3.38], [0, 4.6], [6.9, 4.6], [6.9, 3.56], [3.74, 3.56], [3.74, 3.38]]
+  Bedroom: [7.02, 0, 10.57, 4.62]
+  Living Room: [5.57, 4.94, 10.57, 9.65]
+
+materials:          # defaults for derived walls
+  interior: drywall
+  exterior: brick
+
+walls:              # per room-pair material overrides (guesses, edit me)
+  - rooms: [Bathroom, Kitchen]
+    material: brick
+  - rooms: [Bedroom, Living Room]
+    material: concrete
+
+# Door positions are guesses: every room opens to the hallway.
+# `at` is optional (default: centre of the longest shared wall).
+doors:
+  - {rooms: [Hallway, Bathroom], at: [0.8, 3.33], width: 0.7}
+  - {rooms: [Hallway, Kitchen], at: [2.8, 3.32], width: 0.8}
+  - {rooms: [Hallway, Work], at: [5.0, 3.5], width: 0.8}
+  - {rooms: [Hallway, Bedroom], at: [6.96, 4.1], width: 0.8}
+  - {rooms: [Hallway, Living Room], at: [6.3, 4.77], width: 0.9}
+
+receivers:
+  - {id: living_room, x: 5.57, y: 9.65, z: 1.0, room: Living Room}
+  - {id: bedroom, x: 10.57, y: 0.0, z: 1.0, room: Bedroom}
+  - {id: kitchen, x: 1.7, y: 3.26, z: 1.0, room: Kitchen}
+  - {id: work, x: 6.89, y: 0.0, z: 1.0, room: Work}
+  - {id: bathroom, x: 1.57, y: 3.27, z: 1.0, room: Bathroom}
+  - {id: hallway, x: 3.45, y: 4.08, z: 1.0, room: Hallway}
+
+# Optional sub-room areas for mmWave zone sensors (Aqara FP2 style).
+zones:
+  Desk: [5.2, 0.2, 6.7, 1.4]

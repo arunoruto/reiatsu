@@ -22,9 +22,10 @@
 </div>
 
 > [!WARNING]
-> **Project status: early, phase 2.** The engine, the simulator, the MQTT daemon and the
-> Home Assistant bridge work and are tested, but haven't been tried on real data yet.
-> There's no calibration CLI yet, so the daemon runs on the channel priors.
+> **Project status: early, phase 2.** The engine, the simulator, the MQTT daemon with its
+> web UI and the Home Assistant bridge work and are tested, but have barely been tried on
+> real data. There's no calibration CLI yet, so the daemon runs on the channel priors
+> (plus per-receiver P0 overrides).
 > Anything marked *planned* below doesn't exist yet.
 
 <details>
@@ -99,6 +100,7 @@ forwards them to MQTT. The daemon itself speaks only MQTT, so it doesn't need HA
 ### Built With
 
 * [![Python][Python-shield]][Python-url]
+* [Leaflet](https://leafletjs.com) and [Leaflet-Geoman](https://geoman.io) (free edition, MIT), vendored in `reiatsu/web/vendor`
 * [![NumPy][NumPy-shield]][NumPy-url]
 * [![SciPy][SciPy-shield]][SciPy-url]
 * [![Nix][Nix-shield]][Nix-url]
@@ -185,8 +187,10 @@ services:
   reiatsu:
     image: ghcr.io/arunoruto/reiatsu:edge
     restart: unless-stopped
+    ports:
+      - "8099:8099"                 # web UI: no auth, keep it on the LAN
     volumes:
-      - ./config:/config            # plan.yaml; recordings go here too
+      - ./config:/config            # plan.yaml, background image, recordings
     environment:
       REIATSU_MQTT_HOST: 192.168.1.10
       REIATSU_MQTT_USER: reiatsu
@@ -216,7 +220,7 @@ reiatsu --plan plan.yaml --replay record.jsonl > out.jsonl    # offline: estimat
 
 Every option also reads an environment variable (`REIATSU_PLAN`, `REIATSU_MQTT_HOST`,
 `REIATSU_MQTT_PORT`, `REIATSU_MQTT_USER`, `REIATSU_MQTT_PASSWORD`, `REIATSU_PREFIX`,
-`REIATSU_DISCOVERY_PREFIX`, `REIATSU_RECORD`). Pass the password through the
+`REIATSU_DISCOVERY_PREFIX`, `REIATSU_RECORD`, `REIATSU_HTTP_PORT`, `REIATSU_HTTP_BIND`). Pass the password through the
 environment, not the command line. Topics, with the default prefix `reiatsu`:
 
 | topic | direction | payload |
@@ -233,8 +237,39 @@ attributes) plus *X*, *Y* and *Position uncertainty* in metres. State is publish
 when the room changes, otherwise every 5 s (`--publish-interval`). Adverts from
 receivers that aren't in the plan are ignored, with one warning per receiver.
 
+### Web UI
+
+The daemon serves a plan editor and live map on port 8099 (`--http-port`, `0` turns it
+off; `--http-bind` picks the address). If the plan file doesn't exist yet, the daemon
+starts empty and you draw the plan in the UI.
+
+> [!CAUTION]
+> The UI has no authentication and can overwrite your plan. Keep it on your LAN (or bind
+> it to `127.0.0.1`), or behind Home Assistant ingress once the add-on exists.
+
+* **Background**: upload a PNG or JPEG floor plan, then draw a line of known length to
+  set the scale. Or import an ESPresense companion `config.yaml` (rooms and nodes of a
+  floor). ESPresense has no doors, so every shared wall gets one to start with.
+* **Rooms**: draw polygons or rectangles. Corners snap to other rooms, and nearly square
+  corners and nearly aligned edges are straightened. Works without an image too.
+* **Walls & doors**: walls are derived from the rooms. Tap one to set its material;
+  add doors by tapping a wall and drag them along it. A door on an exterior wall is a
+  door to the outside.
+* **Receivers**: lists the receivers that are online (from `reiatsu/receivers`) and ids
+  seen in adverts. Select one and tap the map to place it, then set its height and an
+  optional P0 override.
+* **References**: mark a tracked device that never moves (a door lock, say) at its
+  known spot. The live view then shows its error against that ground truth.
+* **Live**: per device, the probability heatmap, the estimate with its σ circle, room
+  probabilities, every receiver's online state and last RSSI, and the rooms whose mmWave
+  sensor reports occupied.
+
+Saving writes the plan YAML (keeping `plan.yaml.bak`) and restarts tracking on the new
+plan. The YAML stays the source of truth, but comments in it don't survive a save from
+the UI. The layout works on a phone, ready for the calibration survey wizard.
+
 The recording is one JSON object per line (`{"type": "advert", ...}` or
-`{"type": "occupancy", ...}`). Replay runs it through the same code path as live,
+`{"type": "occupancy", ...}`, `{"type": "receivers", ...}`). Replay runs it through the same code path as live,
 so you can re-run a real day after changing the plan or the tracker.
 
 ### Simulator
@@ -301,7 +336,9 @@ error against the hidden truth.
 
 ### Floor plan
 
-Metres, single floor. Excerpt of [`examples/flat.yaml`](examples/flat.yaml), plus `extra_walls`, which the example doesn't use:
+Metres, single floor, x right and y down (image convention). The web UI writes this
+file. Excerpt of [`examples/flat.yaml`](examples/flat.yaml), plus a few fields the
+example doesn't use:
 
 ```yaml
 max_gap: 0.4                 # edges of two rooms closer than this share a wall
@@ -310,14 +347,20 @@ rooms:
   Hallway: [[0, 3.38], [0, 4.6], [6.9, 4.6], [6.9, 3.56], [3.74, 3.56], [3.74, 3.38]]
   # ...
 materials: {interior: drywall, exterior: brick}       # defaults for derived walls
-walls:                                                # per room-pair overrides
-  - {rooms: [Bedroom, Living Room], material: concrete}
+walls:                                                # material overrides
+  - {rooms: [Bedroom, Living Room], material: concrete} # two rooms: their shared wall
+  - {rooms: [Living Room], material: glass}             # one room: its exterior walls
 extra_walls:                                          # walls not on a room edge
   - {a: [2.0, 0.0], b: [2.0, 1.0], material: glass}
 doors:                                                # the only way between rooms
   - {rooms: [Hallway, Kitchen], at: [2.8, 3.32], width: 0.8}
-receivers:
-  - {id: kitchen, x: 1.7, y: 3.26, z: 1.0, room: Kitchen}
+  - {rooms: [Hallway], at: [0, 4.0], width: 0.9}        # one room: a door to the outside
+receivers:                                            # room defaults to the room at x, y
+  - {id: lego_space_age, x: 7.2, y: 8.9, z: 1.0}
+  - {id: ha_usb, x: 3.4, y: 4.2, z: 0.5, p0: -70}       # P0 override: adapter in a cabinet
+references:                                           # stationary devices: ground truth
+  - {device: nuki, x: 0.1, y: 4.0}
+background: {image: background.png, x: 0, y: 0, scale: 0.0178, opacity: 0.6}  # set by the UI
 zones:                                                # optional mmWave zones
   Desk: [5.2, 0.2, 6.7, 1.4]
 ```
@@ -351,7 +394,7 @@ longest shared wall.
 ```python
 from reiatsu import Advert, Locator, Occupancy, Tracker, fit, load_plan, make_grid, motion_kernel
 
-plan = load_plan("examples/flat.yaml")
+plan = load_plan("sim/flat.yaml")             # the simulator's plan, with receivers placed
 grid = make_grid(plan)
 cal = fit(plan, survey_points, node_links)      # Calibration
 mu = cal.predict(plan, grid.xy)                 # expected RSSI per receiver and cell
@@ -380,9 +423,12 @@ for est in loc.tick(ts):                        # about once per second
 - [ ] Phase 2: service
     - [x] `reiatsu_bridge` HA integration: every proxy's adverts (IRK or MAC) and mmWave states to MQTT
     - [x] MQTT-only daemon with HA discovery, record and replay
+    - [x] Web UI v1: plan editor (image + scale, rooms, walls, doors, receivers, references), ESPresense import, live map
     - [ ] Calibration CLI (survey, node-to-node) and loading fitted parameters in the daemon
-    - [ ] NixOS module `services.reiatsu`, Home Assistant add-on
-- [ ] Phase 3: web UI (floor plan editor, live map, calibration survey wizard)
+    - [ ] NixOS module `services.reiatsu`, Home Assistant add-on (with ingress)
+- [ ] Phase 3
+    - [ ] Calibration survey wizard in the web UI ("stand here, press, 30 s, next point")
+    - [ ] SVG export with per-room ids for [ha-floorplan](https://github.com/ExperienceLovelace/ha-floorplan)
 
 See the [open issues](https://github.com/arunoruto/reiatsu/issues) for a full list of proposed features (and known issues).
 

@@ -37,7 +37,7 @@ class ChannelParams:
         if unknown:
             raise ValueError(f"unknown wall materials {sorted(unknown)}, known: {sorted(LOSS_PRIOR)}")
         return cls(
-            {r.id: P0_PRIOR[0] for r in plan.receivers},
+            {r.id: P0_PRIOR[0] if r.p0 is None else r.p0 for r in plan.receivers},
             N_PRIOR[0],
             {m: LOSS_PRIOR[m][0] for m in plan.materials},
         )

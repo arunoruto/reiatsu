@@ -9,7 +9,7 @@ from reiatsu.locator import Advert, Locator, Occupancy
 from reiatsu.plan import load_plan, make_grid
 from reiatsu.tracker import Tracker, motion_kernel
 
-FLAT = Path(__file__).parent.parent / "examples/flat.yaml"
+FLAT = Path(__file__).parent.parent / "sim/flat.yaml"
 
 
 @pytest.fixture(scope="module")

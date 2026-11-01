@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reiatsu"
-version = "0.2.0"
+version = "0.3.0"
 description = "Wall-aware BLE room locator for phones in a home"
 readme = "README.md"
 license = "MIT"
@@ -19,6 +19,9 @@ test = ["pytest"]
 
 [tool.setuptools]
 packages = ["reiatsu"]
+
+[tool.setuptools.package-data]
+reiatsu = ["web/*.html", "web/vendor/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

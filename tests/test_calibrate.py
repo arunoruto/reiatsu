@@ -7,7 +7,7 @@ from reiatsu.calibrate import WeakLabel, fit, next_point, starter_points, summar
 from reiatsu.plan import load_plan, make_grid
 from sim import world
 
-FLAT = Path(__file__).parent.parent / "examples/flat.yaml"
+FLAT = Path(__file__).parent.parent / "sim/flat.yaml"
 
 
 @pytest.fixture(scope="module")

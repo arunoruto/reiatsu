@@ -9,7 +9,7 @@ from reiatsu.plan import load_plan, make_grid
 from sim import world
 from sim.run import replay
 
-FLAT = Path(__file__).parent.parent / "examples/flat.yaml"
+FLAT = Path(__file__).parent.parent / "sim/flat.yaml"
 
 
 def test_parse_topics():

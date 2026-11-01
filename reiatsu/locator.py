@@ -34,14 +34,23 @@ class Receivers:
 class Locator:
     """One tracker per device. Call :meth:`tick` about once per second."""
 
-    def __init__(self, new_tracker: Callable[[], Tracker]):
+    def __init__(self, new_tracker: Callable[[], Tracker] | None):
+        """``new_tracker`` None: no plan yet, adverts are dropped."""
         self.new_tracker = new_tracker
         self.trackers: dict[str, Tracker] = {}
         self.occupancy: dict[str, bool] = {}
         self.listening: set[str] | None = None  # None: assume every receiver in the plan is online
         self._buf: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
+    def reset(self, new_tracker: Callable[[], Tracker] | None):
+        """New plan: start every device over."""
+        self.new_tracker = new_tracker
+        self.trackers.clear()
+        self._buf.clear()
+
     def advert(self, a: Advert):
+        if self.new_tracker is None:
+            return
         self._buf[a.device_id][a.receiver_id].append(a.rssi)
 
     def set_occupancy(self, o: Occupancy):

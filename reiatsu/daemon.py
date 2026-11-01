@@ -3,6 +3,8 @@
     reiatsu --plan plan.yaml [--record log.jsonl]   # live, optionally logging raw input
     reiatsu --plan plan.yaml --replay log.jsonl     # offline: estimates as JSONL on stdout
 
+Live mode also serves the web UI (plan editor, live map) on --http-port (default 8099).
+
 Input topics (published by the reiatsu_bridge HA integration, or anything else):
 
 - ``<prefix>/adverts``: one {ts, receiver_id, device_id, rssi} object or a list of them
@@ -80,13 +82,21 @@ def track(events: Iterable[tuple[float, Event | None]], locator: Locator, emit: 
             locator.set_receivers(ev)
 
 
-def build_locator(plan_path: str) -> tuple[Locator, set[str]]:
-    plan = load_plan(plan_path)
+def tracker_factory(src: str | dict) -> tuple[Callable[[], Tracker] | None, set[str]]:
+    """Plan (path or dict) -> tracker factory and receiver ids; None while the plan has no rooms."""
+    plan = load_plan(src)
+    if not plan.rooms:
+        return None, set()
     grid = make_grid(plan)
-    # ponytail: channel priors only; load fitted ChannelParams once there is a calibration CLI
+    # ponytail: channel priors (plus per-receiver p0 overrides); load fitted ChannelParams once there is a calibration CLI
     mu = predict(plan, ChannelParams.prior(plan), grid.xy)
     kernel, ids = motion_kernel(grid), [r.id for r in plan.receivers]
-    return Locator(lambda: Tracker(grid, mu, ids, kernel)), set(ids)
+    return (lambda: Tracker(grid, mu, ids, kernel)), set(ids)
+
+
+def build_locator(src: str | dict) -> tuple[Locator, set[str]]:
+    factory, ids = tracker_factory(src)
+    return Locator(factory), ids
 
 
 def state(e: Estimate) -> dict:
@@ -135,10 +145,20 @@ class Publisher:
                 self.last[e.device_id] = (e.room, e.ts)
 
 
+RELOAD = "\0reload"  # inbox topic: the web UI saved a new plan
+
+
 def live(args, locator: Locator, receivers: set[str]):
     import paho.mqtt.client as mqtt
 
     inbox: queue.Queue = queue.Queue()
+    app = None
+    if args.http_port:
+        from .web import App, serve
+
+        app = App(args.plan, lambda raw: inbox.put((RELOAD, tracker_factory(raw))))
+        serve(app, args.http_bind, args.http_port)
+    rssi: dict[str, dict[str, tuple[float, float]]] = {}  # receiver -> device -> (rssi, ts)
     status = f"{args.prefix}/status"
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"reiatsu-{args.prefix}")
     if args.mqtt_user:
@@ -164,6 +184,14 @@ def live(args, locator: Locator, receivers: set[str]):
             except queue.Empty:
                 yield time.time(), None
                 continue
+            if topic == RELOAD:
+                factory, ids = payload
+                locator.reset(factory)
+                receivers.clear()
+                receivers.update(ids)
+                warned.clear()
+                log.info("plan reloaded: %d receivers", len(ids))
+                continue
             try:
                 evs = parse(topic, payload, args.prefix)
             except (ValueError, KeyError, TypeError) as err:
@@ -172,16 +200,38 @@ def live(args, locator: Locator, receivers: set[str]):
             for ev in evs:
                 if record:
                     record.write(to_line(ev) + "\n")
+                if isinstance(ev, Advert):
+                    rssi.setdefault(ev.receiver_id, {})[ev.device_id] = (ev.rssi, ev.ts)
                 if isinstance(ev, Advert) and ev.receiver_id not in receivers and ev.receiver_id not in warned:
                     warned.add(ev.receiver_id)
                     log.warning("receiver %r is not in the floor plan; its adverts are ignored", ev.receiver_id)
                 yield time.time(), ev
 
+    publish = Publisher(client, args.prefix, args.discovery_prefix, args.publish_interval)
+
+    def emit(estimates: list[Estimate]):
+        publish(estimates)
+        if app:
+            app.snapshot = snapshot(locator, estimates, receivers, rssi)
+
     try:
-        track(events(), locator, Publisher(client, args.prefix, args.discovery_prefix, args.publish_interval))
+        track(events(), locator, emit)
     finally:
         client.publish(status, "offline", retain=True)
         client.loop_stop()
+
+
+def snapshot(locator: Locator, estimates: list[Estimate], receivers: set[str], rssi: dict) -> dict:
+    """Everything the live map shows, as of this tick (built in the tracking thread)."""
+    return {
+        "ts": estimates[0].ts if estimates else time.time(),
+        "devices": {e.device_id: state(e) for e in estimates},
+        "beliefs": {dev: t.belief for dev, t in locator.trackers.items()},
+        "occupancy": dict(locator.occupancy),
+        "online": sorted(locator.listening) if locator.listening is not None else None,
+        "plan_receivers": sorted(receivers),
+        "rssi": {rx: {dev: list(v) for dev, v in d.items()} for rx, d in rssi.items()},
+    }
 
 
 def print_estimates(estimates: list[Estimate]):
@@ -201,11 +251,17 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--mqtt-password", default=env("REIATSU_MQTT_PASSWORD"), help="prefer the env var [REIATSU_MQTT_PASSWORD]")
     ap.add_argument("--prefix", default=env("REIATSU_PREFIX", "reiatsu"), help="topic prefix [REIATSU_PREFIX]")
     ap.add_argument("--discovery-prefix", default=env("REIATSU_DISCOVERY_PREFIX", "homeassistant"), help="[REIATSU_DISCOVERY_PREFIX]")
+    ap.add_argument("--http-port", type=int, default=int(env("REIATSU_HTTP_PORT", "8099")), help="web UI port, 0 = off [REIATSU_HTTP_PORT]")
+    ap.add_argument("--http-bind", default=env("REIATSU_HTTP_BIND", "0.0.0.0"), help="web UI address; no auth, keep it on the LAN [REIATSU_HTTP_BIND]")
     ap.add_argument("--publish-interval", type=float, default=5.0, help="seconds between state updates while the room is unchanged")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    locator, receivers = build_locator(args.plan)
+    if not args.replay and args.http_port and not os.path.exists(args.plan):
+        log.info("no plan at %s yet: draw one in the web UI", args.plan)
+        locator, receivers = build_locator({})
+    else:
+        locator, receivers = build_locator(args.plan)
     if args.replay:
         with open(args.replay) as f:
             track(((ev.ts, ev) for ev in read_log(f)), locator, print_estimates)

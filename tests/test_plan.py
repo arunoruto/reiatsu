@@ -7,7 +7,7 @@ from scipy.sparse.csgraph import connected_components
 from reiatsu.channel import wall_counts
 from reiatsu.plan import crosses, load_plan, make_grid
 
-FLAT = Path(__file__).parent.parent / "examples/flat.yaml"
+FLAT = Path(__file__).parent.parent / "sim/flat.yaml"
 
 TWO_ROOMS = {
     "rooms": {"A": [0, 0, 3, 3], "B": [3.1, 0, 6, 3]},

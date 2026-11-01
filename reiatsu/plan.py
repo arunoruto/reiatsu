@@ -40,6 +40,7 @@ class Receiver:
     xy: np.ndarray
     z: float
     room: str
+    p0: float | None = None  # dBm at 1 m, overrides the prior (e.g. an adapter inside a cabinet)
 
 
 @dataclass
@@ -49,6 +50,7 @@ class Plan:
     doors: list[Door]
     receivers: list[Receiver]
     zones: dict[str, np.ndarray] = field(default_factory=dict)
+    references: dict[str, np.ndarray] = field(default_factory=dict)  # device -> xy of a stationary device
 
     @property
     def materials(self) -> list[str]:
@@ -136,7 +138,7 @@ def derive_walls(rooms, max_gap=0.4, interior="drywall", exterior="brick", pair_
                 mat = pair_material.get(frozenset((ra, rb)), interior)
                 walls.append(Wall(mid + u * lo, mid + u * hi, mat, (ra, rb)))
         for lo, hi in _intervals_complement(covered, length):
-            walls.append(Wall(a0 + u * lo, a0 + u * hi, exterior, (ra,)))
+            walls.append(Wall(a0 + u * lo, a0 + u * hi, pair_material.get(frozenset((ra,)), exterior), (ra,)))
     return walls
 
 
@@ -168,21 +170,37 @@ def _polygon(v) -> np.ndarray:
 
 def load_plan(src: str | Path | dict) -> Plan:
     cfg = src if isinstance(src, dict) else yaml.safe_load(Path(src).read_text())
-    rooms = {name: _polygon(v) for name, v in cfg["rooms"].items()}
+    rooms = {name: _polygon(v) for name, v in (cfg.get("rooms") or {}).items()}
     mats = {"interior": "drywall", "exterior": "brick", **cfg.get("materials", {})}
-    pair_mat = {frozenset(w["rooms"]): w["material"] for w in cfg.get("walls", [])}
+    pair_mat = {frozenset(w["rooms"]): w["material"] for w in cfg.get("walls") or []}  # one room: its exterior walls
     walls = derive_walls(rooms, cfg.get("max_gap", 0.4), mats["interior"], mats["exterior"], pair_mat)
-    walls += [Wall(np.asarray(w["a"], float), np.asarray(w["b"], float), w["material"], ()) for w in cfg.get("extra_walls", [])]
+    walls += [Wall(np.asarray(w["a"], float), np.asarray(w["b"], float), w["material"], ()) for w in cfg.get("extra_walls") or []]
     doors = []
-    for d in cfg.get("doors", []):
+    for d in cfg.get("doors") or []:
         walls, door = cut_door(walls, tuple(d["rooms"]), d.get("at"), float(d.get("width", 0.8)))
         doors.append(door)
-    receivers = [Receiver(r["id"], np.array([r["x"], r["y"]], float), float(r.get("z", 1.0)), r["room"]) for r in cfg.get("receivers", [])]
-    for r in receivers:
-        if r.room not in rooms:
-            raise ValueError(f"receiver {r.id}: unknown room {r.room!r}")
+    receivers = []
+    for r in cfg.get("receivers") or []:
+        xy = np.array([r["x"], r["y"]], float)
+        room = r.get("room") or room_at(rooms, xy)
+        if room not in rooms:
+            raise ValueError(f"receiver {r['id']}: unknown room {room!r}")
+        p0 = r.get("p0")
+        receivers.append(Receiver(str(r["id"]), xy, float(r.get("z", 1.0)), room, None if p0 is None else float(p0)))
     zones = {name: _polygon(v) for name, v in (cfg.get("zones") or {}).items()}
-    return Plan(rooms, walls, doors, receivers, zones)
+    refs = {str(r["device"]): np.array([r["x"], r["y"]], float) for r in cfg.get("references") or []}
+    return Plan(rooms, walls, doors, receivers, zones, refs)
+
+
+def room_at(rooms: dict[str, np.ndarray], xy) -> str | None:
+    """The room containing ``xy``, else the one with the nearest edge."""
+    if not rooms:
+        return None
+    pt = np.asarray(xy, float)[None]
+    for name, poly in rooms.items():
+        if inside(poly, pt)[0]:
+            return name
+    return min(rooms, key=lambda n: boundary_dist(rooms[n], pt)[0])
 
 
 # --- walkable grid ----------------------------------------------------------
@@ -216,6 +234,8 @@ def make_grid(plan: Plan, res: float = 0.2) -> Grid:
     pairs = pairs[room[pairs[:, 0]] == room[pairs[:, 1]]]
     links = [pairs]
     for door in plan.doors:
+        if len(door.rooms) < 2:  # a door to the outside connects no cells
+            continue
         near = np.linalg.norm(xy - door.at, axis=1) <= door.width / 2 + res
         a = np.flatnonzero(near & (room == names.index(door.rooms[0])))
         b = np.flatnonzero(near & (room == names.index(door.rooms[1])))

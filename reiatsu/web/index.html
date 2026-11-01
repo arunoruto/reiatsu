@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reiatsu</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="vendor/leaflet-geoman.css">
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --fg: #1d1d1b; --muted: #6b6b66; --line: #dcdcd6;
+  --accent: #2463eb; --danger: #c62828; --ok: #2e7d32; --map: #ecebe6;
+  --room: #2463eb; --occupied: #f59e0b; --heat: 234, 88, 12;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --fg: #ececea; --muted: #9a9a94; --line: #3a3a36;
+    --accent: #6c9bff; --danger: #ef6b6b; --ok: #66bb6a; --map: #232321;
+    --room: #6c9bff; --occupied: #fbbf24;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { display: grid; grid-template-rows: auto 1fr; background: var(--bg); color: var(--fg);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+header b { font-size: 16px; }
+nav { display: flex; flex-wrap: wrap; gap: 4px; }
+nav button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+#status { color: var(--muted); font-size: 12px; flex: 1; min-width: 120px; }
+#status.err { color: var(--danger); }
+main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+#map { background: var(--map); min-height: 0; }
+aside { overflow: auto; padding: 12px; border-left: 1px solid var(--line); background: var(--panel); }
+@media (max-width: 800px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 58vh auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+}
+button, select, input { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 5px 9px; min-height: 32px; }
+button { cursor: pointer; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--danger); }
+input[type=number] { width: 80px; }
+h3 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+h3:first-child { margin-top: 0; }
+p.hint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.row { display: flex; align-items: center; gap: 6px; margin: 4px 0; flex-wrap: wrap; }
+.row label { min-width: 70px; color: var(--muted); }
+ul.list { list-style: none; margin: 0; padding: 0; }
+ul.list li { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+ul.list li.sel { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+ul.list li .grow { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.badge.on { color: var(--ok); border-color: var(--ok); }
+.badge.off { color: var(--danger); border-color: var(--danger); }
+.bar { height: 6px; background: var(--accent); border-radius: 3px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+.leaflet-container { background: var(--map); font: inherit; }
+.lbl { background: transparent; border: 0; box-shadow: none; color: var(--fg); font-weight: 600; font-size: 12px; }
+.lbl::before { display: none; }
+.heat { image-rendering: pixelated; }
+.pin { width: 18px !important; height: 18px !important; margin: -9px 0 0 -9px !important; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px #0006; background: #888; }
+.pin.rx { background: var(--muted); }
+.pin.rx.on { background: var(--ok); }
+.pin.rx.off { background: var(--danger); }
+.pin.ref { background: #9333ea; border-radius: 3px; }
+.pin.door { width: 14px !important; height: 14px !important; margin: -7px 0 0 -7px !important; border-radius: 3px; background: var(--ok); }
+.pin.sel { box-shadow: 0 0 0 3px var(--accent); }
+.pin span { position: absolute; left: 20px; top: -2px; white-space: nowrap; font-size: 11px; font-weight: 600;
+  color: var(--fg); text-shadow: 0 0 3px var(--map), 0 0 3px var(--map); }
+</style>
+</head>
+<body>
+<header>
+  <b>Reiatsu</b>
+  <nav id="tabs"></nav>
+  <span id="status"></span>
+  <button id="revert" disabled>Revert</button>
+  <button id="save" class="primary" disabled>Save</button>
+</header>
+<main>
+  <div id="map"></div>
+  <aside id="panel"></aside>
+</main>
+<script src="vendor/leaflet.js"></script>
+<script src="vendor/leaflet-geoman.js"></script>
+<script>
+"use strict";
+// Plan coordinates are metres, x right, y down (image convention); Leaflet's CRS.Simple has y up.
+const ll = (x, y) => L.latLng(-y, x);
+const xy = (p) => [r2(p.lng), r2(-p.lat)];
+const r2 = (v) => Math.round(v * 100) / 100;
+const $ = (s) => document.querySelector(s);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();  // SVG attributes can't use var()
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const MODES = { live: "Live", rooms: "Rooms", walls: "Walls & doors", receivers: "Receivers", refs: "References", background: "Background" };
+const MAT_COLOR = { drywall: "#9ca3af", brick: "#b45309", concrete: "#475569", glass: "#38bdf8" };
+
+let plan = {}, saved = "{}", derived = null, planError = null, materials = [];
+let live = {}, device = null, showHeat = true;
+let mode = "live", sel = null, addingDoor = false, scalePts = null, editing = null;
+let bgSize = null;  // natural pixel size of the background image
+let dragging = false, lastOnline = "";
+
+const map = L.map("map", { crs: L.CRS.Simple, minZoom: -3, maxZoom: 8, zoomSnap: 0.25, attributionControl: false });
+map.setView([0, 0], 4);
+map.pm.setGlobalOptions({ snappable: true, snapDistance: 14, allowSelfIntersection: false });
+const layers = {};
+for (const k of ["bg", "heat", "rooms", "walls", "doors", "rx", "refs", "est", "tool"]) layers[k] = L.layerGroup().addTo(map);
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+// --- plan model -------------------------------------------------------------
+
+function normalize(p) {
+  p = structuredClone(p || {});
+  p.rooms = p.rooms || {};
+  for (const [n, v] of Object.entries(p.rooms)) {
+    if (v.length === 4 && typeof v[0] === "number") {
+      const [x0, y0, x1, y1] = v;
+      p.rooms[n] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    }
+  }
+  for (const k of ["walls", "doors", "receivers", "references"]) p[k] = p[k] || [];
+  p.materials = { interior: "drywall", exterior: "brick", ...(p.materials || {}) };
+  if (p.max_gap == null) p.max_gap = 0.4;
+  return p;
+}
+
+function setStatus(msg, err = false) {
+  const s = $("#status");
+  s.textContent = msg;
+  s.className = err ? "err" : "";
+}
+
+function dirty() { return JSON.stringify(plan) !== saved; }
+
+function refreshButtons() {
+  $("#save").disabled = !dirty() || !!planError;
+  $("#revert").disabled = !dirty();
+  if (planError) setStatus(planError, true);
+  else setStatus(dirty() ? "Unsaved changes" : liveStatus());
+}
+
+function liveStatus() {
+  if (!live.ts) return "Waiting for data…";
+  const age = Date.now() / 1000 - live.ts;
+  return `Live · ${Object.keys(live.devices || {}).length} device(s) · ${age < 5 ? "now" : Math.round(age) + " s ago"}`;
+}
+
+let previewTimer = null;
+function changed({ rooms = true } = {}) {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    try {
+      derived = await api("api/preview", { method: "POST", body: JSON.stringify(plan) });
+      planError = null;
+    } catch (e) {
+      planError = e.message;
+    }
+    drawPlan({ rooms });
+    refreshButtons();
+  }, 250);
+  if (rooms) drawRooms();
+  drawMarkers();
+  refreshButtons();
+  renderPanel();
+}
+
+function roomAt(p) {
+  for (const [name, poly] of Object.entries(plan.rooms)) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i], [xj, yj] = poly[j];
+      if ((yi > p[1]) !== (yj > p[1]) && p[0] < xi + ((p[1] - yi) * (xj - xi)) / (yj - yi)) inside = !inside;
+    }
+    if (inside) return name;
+  }
+  return null;
+}
+
+// Pull a polygon's coordinates onto nearby x/y values of every vertex (its own and other
+// rooms'): near-90° corners become exact and edges line up with neighbouring rooms.
+function straighten(poly, others, tol = 0.1) {
+  const xs = [], ys = [];
+  others.forEach((q) => q.forEach(([x, y]) => { xs.push(x); ys.push(y); }));
+  const snap = (v, cands) => cands.reduce((b, c) => (Math.abs(c - v) < Math.abs(b - v) ? c : b), v);
+  const out = poly.map(([x, y]) => [x, y]);
+  out.forEach((p, i) => {
+    const ownX = out.filter((_, j) => j !== i).map((q) => q[0]), ownY = out.filter((_, j) => j !== i).map((q) => q[1]);
+    const cx = snap(p[0], xs.concat(ownX)), cy = snap(p[1], ys.concat(ownY));
+    if (Math.abs(cx - p[0]) < tol) p[0] = cx;
+    if (Math.abs(cy - p[1]) < tol) p[1] = cy;
+  });
+  return out.map(([x, y]) => [r2(x), r2(y)]);
+}
+
+function renameRoom(old, name) {
+  if (!name || name === old || plan.rooms[name]) return false;
+  const rooms = {};
+  for (const [n, v] of Object.entries(plan.rooms)) rooms[n === old ? name : n] = v;
+  plan.rooms = rooms;
+  const fix = (arr) => arr.map((r) => (r === old ? name : r));
+  plan.doors.forEach((d) => (d.rooms = fix(d.rooms)));
+  plan.walls.forEach((w) => (w.rooms = fix(w.rooms)));
+  plan.receivers.forEach((r) => { if (r.room === old) r.room = name; });
+  if (plan.zones) for (const z of Object.keys(plan.zones)) if (z === old) delete plan.zones[z];
+  return true;
+}
+
+function deleteRoom(name) {
+  delete plan.rooms[name];
+  plan.doors = plan.doors.filter((d) => !d.rooms.includes(name));
+  plan.walls = plan.walls.filter((w) => !w.rooms.includes(name));
+  plan.receivers.forEach((r) => { if (r.room === name) delete r.room; });
+}
+
+// --- drawing ----------------------------------------------------------------
+
+function bounds() {
+  const pts = Object.values(plan.rooms).flat();
+  if (plan.background?.image && bgSize) {
+    const b = plan.background;
+    pts.push([b.x || 0, b.y || 0], [(b.x || 0) + bgSize[0] * b.scale, (b.y || 0) + bgSize[1] * b.scale]);
+  }
+  if (!pts.length) pts.push([0, 0], [10, 8]);
+  return L.latLngBounds(pts.map(([x, y]) => ll(x, y)));
+}
+
+function drawBackground() {
+  layers.bg.clearLayers();
+  const b = plan.background;
+  if (!b?.image || !bgSize) return;
+  const x = b.x || 0, y = b.y || 0;
+  L.imageOverlay(`api/background/${encodeURIComponent(b.image)}?v=${b.v || 0}`,
+    [ll(x, y + bgSize[1] * b.scale), ll(x + bgSize[0] * b.scale, y)],
+    { opacity: b.opacity ?? 0.6, pmIgnore: true, interactive: false }).addTo(layers.bg);
+}
+
+function loadBackground() {
+  const b = plan.background;
+  if (!b?.image) { bgSize = null; drawBackground(); return; }
+  const img = new Image();
+  img.onload = () => { bgSize = [img.naturalWidth, img.naturalHeight]; drawBackground(); };
+  img.src = `api/background/${encodeURIComponent(b.image)}?v=${b.v || 0}`;
+}
+
+function drawRooms() {
+  if (editing) { editing.pm.disable(); editing = null; }
+  layers.rooms.clearLayers();
+  const occ = live.occupancy || {};
+  for (const [name, poly] of Object.entries(plan.rooms)) {
+    const isSel = mode === "rooms" && sel === name, occupied = mode === "live" && occ[name];
+    const layer = L.polygon(poly.map(([x, y]) => ll(x, y)), {
+      color: css("--room"), weight: isSel ? 2 : 1, opacity: 0.7,
+      fillColor: css(occupied ? "--occupied" : "--room"), fillOpacity: occupied ? 0.3 : isSel ? 0.15 : 0.05,
+      interactive: mode === "rooms",
+    });
+    layer.bindTooltip(esc(name), { permanent: true, direction: "center", className: "lbl" });
+    layer.on("click", (e) => { L.DomEvent.stop(e); sel = name; drawRooms(); renderPanel(); });
+    layer.addTo(layers.rooms);
+    if (isSel) {
+      layer.pm.enable({ snappable: true, snapDistance: 14 });
+      layer.on("pm:edit", () => {
+        const others = Object.entries(plan.rooms).filter(([n]) => n !== name).map(([, v]) => v);
+        plan.rooms[name] = straighten(layer.getLatLngs()[0].map(xy), others);
+        changed({ rooms: false });
+      });
+      editing = layer;
+    }
+  }
+}
+
+function drawPlan({ rooms = true } = {}) {
+  if (rooms) drawRooms();
+  layers.walls.clearLayers();
+  if (!derived) return;
+  derived.walls.forEach((w) => {
+    const key = [...w.rooms].sort().join("|");
+    const isSel = mode === "walls" && sel === key;
+    const line = L.polyline([ll(...w.a), ll(...w.b)], {
+      color: MAT_COLOR[w.material] || "#888", weight: isSel ? 7 : w.rooms.length === 2 ? 4 : 5,
+      interactive: mode === "walls", pmIgnore: false,
+    });
+    line.on("click", (e) => {
+      L.DomEvent.stop(e);
+      if (addingDoor && w.rooms.length) {
+        plan.doors.push({ rooms: [...w.rooms], at: xy(e.latlng), width: 0.8 });
+        addingDoor = false;
+        sel = `door:${plan.doors.length - 1}`;
+      } else sel = key;
+      changed({ rooms: false });
+    });
+    line.addTo(layers.walls);
+  });
+  drawMarkers();
+}
+
+function pin(cls, label, latlng, draggable, onDrag, onClick) {
+  const m = L.marker(latlng, {
+    icon: L.divIcon({ className: `pin ${cls}`, html: label ? `<span>${esc(label)}</span>` : "" }),
+    draggable, autoPan: true,
+  });
+  m.on("dragstart", () => (dragging = true));
+  m.on("dragend", () => { dragging = false; if (onDrag) onDrag(xy(m.getLatLng())); });
+  if (onClick) m.on("click", (e) => { L.DomEvent.stop(e); onClick(); });
+  return m;
+}
+
+function drawMarkers() {
+  layers.doors.clearLayers();
+  (derived?.doors || []).forEach((d, i) => {
+    if (!plan.doors[i]) return;
+    const id = `door:${i}`;
+    pin(`door${sel === id ? " sel" : ""}`, "", ll(...d.at), mode === "walls",
+      (p) => { plan.doors[i].at = p; sel = id; changed({ rooms: false }); },
+      () => { if (mode === "walls") { sel = id; changed({ rooms: false }); } }).addTo(layers.doors);
+  });
+  layers.rx.clearLayers();
+  const online = live.online;
+  plan.receivers.forEach((r) => {
+    const st = online ? (online.includes(r.id) ? " on" : " off") : "";
+    pin(`rx${st}${mode === "receivers" && sel === r.id ? " sel" : ""}`, r.id, ll(r.x, r.y), mode === "receivers",
+      (p) => { [r.x, r.y] = p; delete r.room; sel = r.id; changed({ rooms: false }); },
+      () => { if (mode === "receivers") { sel = r.id; renderPanel(); drawMarkers(); } }).addTo(layers.rx);
+  });
+  layers.refs.clearLayers();
+  plan.references.forEach((r) => {
+    pin(`ref${mode === "refs" && sel === r.device ? " sel" : ""}`, r.device, ll(r.x, r.y), mode === "refs",
+      (p) => { [r.x, r.y] = p; sel = r.device; changed({ rooms: false }); },
+      () => { if (mode === "refs") { sel = r.device; renderPanel(); drawMarkers(); } }).addTo(layers.refs);
+  });
+}
+
+function drawLive() {
+  layers.heat.clearLayers();
+  layers.est.clearLayers();
+  if (mode !== "live" || !device) return;
+  const cells = derived?.cells || [], belief = live.belief, res = derived?.res || 0.2;
+  if (showHeat && belief && belief.length === cells.length && cells.length) {
+    const xs = cells.map((c) => c[0]), ys = cells.map((c) => c[1]);
+    const x0 = Math.min(...xs), y0 = Math.min(...ys);
+    const w = Math.round((Math.max(...xs) - x0) / res) + 1, h = Math.round((Math.max(...ys) - y0) / res) + 1;
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d"), img = ctx.createImageData(w, h);
+    const [cr, cg, cb] = css("--heat").split(",").map(Number);
+    cells.forEach(([x, y], i) => {
+      const k = 4 * (Math.round((y - y0) / res) * w + Math.round((x - x0) / res));
+      img.data.set([cr, cg, cb, Math.round(230 * Math.sqrt(belief[i]))], k);
+    });
+    ctx.putImageData(img, 0, 0);
+    L.imageOverlay(cv.toDataURL(), [ll(x0 - res / 2, y0 + (h - 0.5) * res), ll(x0 + (w - 0.5) * res, y0 - res / 2)],
+      { className: "heat", pmIgnore: true, interactive: false }).addTo(layers.heat);
+  }
+  const d = live.devices?.[device];
+  if (d) {
+    L.circle(ll(d.x, d.y), { radius: Math.max(d.sigma, 0.1), color: css("--accent"), weight: 1, fillOpacity: 0.08, interactive: false, pmIgnore: true }).addTo(layers.est);
+    L.circleMarker(ll(d.x, d.y), { radius: 5, color: "#fff", weight: 2, fillColor: css("--accent"), fillOpacity: 1, interactive: false, pmIgnore: true }).addTo(layers.est);
+  }
+}
+
+// --- panel ------------------------------------------------------------------
+
+function receiverIds() {
+  const ids = new Set(plan.receivers.map((r) => r.id));
+  (live.online || []).forEach((i) => ids.add(i));
+  Object.keys(live.rssi || {}).forEach((i) => ids.add(i));
+  return [...ids].sort();
+}
+
+function deviceIds() {
+  const ids = new Set(Object.keys(live.devices || {}));
+  plan.references.forEach((r) => ids.add(r.device));
+  Object.values(live.rssi || {}).forEach((d) => Object.keys(d).forEach((i) => ids.add(i)));
+  return [...ids].sort();
+}
+
+function rxStatus(id) {
+  if (!live.online) return '<span class="badge">online?</span>';
+  return live.online.includes(id) ? '<span class="badge on">online</span>' : '<span class="badge off">offline</span>';
+}
+
+function liveInfo() {
+  const d = live.devices?.[device];
+  if (!device) return '<p class="hint">No tracked devices yet. Devices appear once the bridge forwards their adverts.</p>';
+  let h = "";
+  if (d) {
+    h += `<h3>${esc(device)}: ${esc(d.room)}</h3>`;
+    const probs = Object.entries(d.room_probs).sort((a, b) => b[1] - a[1]);
+    h += "<table>" + probs.map(([r, p]) => `<tr><td>${esc(r)}</td><td style="width:45%"><div class="bar" style="width:${(p * 100).toFixed(1)}%"></div></td><td>${(p * 100).toFixed(0)}%</td></tr>`).join("") + "</table>";
+    h += `<p class="hint">x ${d.x.toFixed(2)} m, y ${d.y.toFixed(2)} m, σ ${d.sigma.toFixed(2)} m</p>`;
+    const ref = plan.references.find((r) => r.device === device);
+    if (ref) {
+      const err = Math.hypot(d.x - ref.x, d.y - ref.y), room = roomAt([ref.x, ref.y]);
+      h += `<p><b>Reference:</b> error ${err.toFixed(2)} m · true room ${esc(room || "?")} ${room === d.room ? "✓" : "✗"} (${((d.room_probs[room] || 0) * 100).toFixed(0)}%)</p>`;
+    }
+  } else h += `<p class="hint">${esc(device)}: no estimate yet.</p>`;
+  h += "<h3>Receivers</h3><table><tr><th>id</th><th></th><th>RSSI</th></tr>";
+  const now = Date.now() / 1000;
+  for (const id of receiverIds()) {
+    const v = live.rssi?.[id]?.[device];
+    const inPlan = plan.receivers.some((r) => r.id === id) ? "" : ' <span class="badge">not placed</span>';
+    h += `<tr><td>${esc(id)}${inPlan}</td><td>${rxStatus(id)}</td><td>${v ? `${v[0]} dBm · ${Math.round(now - v[1])} s` : "–"}</td></tr>`;
+  }
+  h += "</table>";
+  const occ = Object.entries(live.occupancy || {});
+  if (occ.length) h += "<h3>mmWave</h3><p>" + occ.map(([a, o]) => `<span class="badge${o ? " on" : ""}">${esc(a)}: ${o ? "occupied" : "empty"}</span>`).join(" ") + "</p>";
+  return h;
+}
+
+const PANELS = {
+  live() {
+    const devs = deviceIds();
+    if (!device && devs.length) device = devs[0];
+    return `<div class="row"><label>Device</label><select data-act="device">${devs.map((d) => `<option ${d === device ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+      <div class="row"><input type="checkbox" id="heat" data-act="heat" ${showHeat ? "checked" : ""}><label for="heat" style="min-width:0">Heatmap</label></div>
+      <div id="liveinfo">${liveInfo()}</div>`;
+  },
+  rooms() {
+    const names = Object.keys(plan.rooms);
+    let h = `<h3>Draw</h3><div class="row"><button data-act="draw-poly">Polygon</button><button data-act="draw-rect">Rectangle</button></div>
+      <p class="hint">Tap the corners and finish on the first point. Corners snap to other rooms; nearly square corners and edges close to a neighbour's are straightened. Rooms closer than the wall gap share a wall.</p>
+      <div class="row"><label>Wall gap</label><input type="number" step="0.05" min="0.05" data-act="max-gap" value="${plan.max_gap}"> m</div>
+      <h3>Rooms</h3><ul class="list">`;
+    h += names.map((n) => `<li class="${n === sel ? "sel" : ""}" data-act="sel-room" data-id="${esc(n)}"><span class="grow">${esc(n)}</span></li>`).join("") || '<p class="hint">No rooms yet.</p>';
+    h += "</ul>";
+    if (sel && plan.rooms[sel]) {
+      h += `<h3>Selected</h3><div class="row"><label>Name</label><input data-act="rename" value="${esc(sel)}"></div>
+        <p class="hint">Drag the corners to edit; tap an edge's middle handle to add a corner.</p>
+        <div class="row"><button class="danger" data-act="del-room">Delete room</button></div>`;
+    }
+    return h;
+  },
+  walls() {
+    const mats = (v, act) => `<select data-act="${act}">${materials.map((m) => `<option ${m === v ? "selected" : ""}>${m}</option>`).join("")}</select>`;
+    let h = `<h3>Default materials</h3>
+      <div class="row"><label>Interior</label>${mats(plan.materials.interior, "mat-interior")}</div>
+      <div class="row"><label>Exterior</label>${mats(plan.materials.exterior, "mat-exterior")}</div>
+      <p class="hint">Tap a wall to set its material. Colours: ${Object.entries(MAT_COLOR).map(([m, c]) => `<span style="color:${c}">■</span> ${m}`).join(" ")}</p>`;
+    if (sel && !sel.startsWith("door:")) {
+      const rooms = sel.split("|"), ov = plan.walls.find((w) => [...w.rooms].sort().join("|") === sel);
+      const def = rooms.length === 2 ? plan.materials.interior : plan.materials.exterior;
+      h += `<h3>${rooms.length === 2 ? "Wall " + esc(rooms.join(" – ")) : "Exterior walls of " + esc(rooms[0])}</h3>
+        <div class="row"><label>Material</label>${mats(ov ? ov.material : def, "mat-wall")}</div>`;
+    }
+    h += `<h3>Doors</h3><div class="row"><button data-act="add-door" class="${addingDoor ? "primary" : ""}">${addingDoor ? "Tap a wall…" : "Add door"}</button></div>
+      <p class="hint">Drag the green squares to move doors along their wall. A door on an exterior wall is a door to the outside.</p><ul class="list">`;
+    h += plan.doors.map((d, i) => `<li class="${sel === `door:${i}` ? "sel" : ""}" data-act="sel-door" data-id="${i}"><span class="grow">${esc(d.rooms.join(" – "))}</span></li>`).join("");
+    h += "</ul>";
+    if (sel?.startsWith("door:")) {
+      const d = plan.doors[+sel.slice(5)];
+      if (d) h += `<div class="row"><label>Width</label><input type="number" step="0.05" min="0.3" data-act="door-width" value="${d.width ?? 0.8}"> m
+        <button class="danger" data-act="del-door">Delete</button></div>`;
+    }
+    return h;
+  },
+  receivers() {
+    let h = `<h3>Receivers</h3><p class="hint">Online scanners and ids seen in adverts. Select one, then tap the map to place it; drag to move.</p><ul class="list">`;
+    h += receiverIds().map((id) => {
+      const placed = plan.receivers.some((r) => r.id === id);
+      return `<li class="${id === sel ? "sel" : ""}" data-act="sel-rx" data-id="${esc(id)}"><span class="grow">${esc(id)}</span>${rxStatus(id)}${placed ? "" : ' <span class="badge">not placed</span>'}</li>`;
+    }).join("") || '<p class="hint">None seen yet.</p>';
+    h += `</ul><div class="row"><input placeholder="other id" data-act="new-rx-id"><button data-act="new-rx">Add</button></div>`;
+    const r = plan.receivers.find((r) => r.id === sel);
+    if (r) {
+      h += `<h3>${esc(r.id)}</h3>
+        <div class="row"><label>x / y</label>${r.x} / ${r.y} m · ${esc(derived?.receivers?.[r.id] || roomAt([r.x, r.y]) || "?")}</div>
+        <div class="row"><label>Height z</label><input type="number" step="0.1" data-act="rx-z" value="${r.z ?? 1}"> m</div>
+        <div class="row"><label>P0</label><input type="number" step="1" data-act="rx-p0" value="${r.p0 ?? ""}" placeholder="prior"> dBm at 1 m</div>
+        <p class="hint">Leave P0 empty for the default (−59 dBm). Lower it for a receiver that hears badly, e.g. inside a cabinet.</p>
+        <div class="row"><button class="danger" data-act="del-rx">Remove from plan</button></div>`;
+    } else if (sel) h += `<p class="hint">Tap the map to place <b>${esc(sel)}</b>.</p>`;
+    return h;
+  },
+  refs() {
+    let h = `<h3>Reference devices</h3><p class="hint">A tracked device that stays at a known spot (e.g. a door lock). Its live error shows on the Live tab; later it becomes a calibration label. Select, then tap the map.</p><ul class="list">`;
+    h += deviceIds().map((id) => {
+      const placed = plan.references.some((r) => r.device === id);
+      return `<li class="${id === sel ? "sel" : ""}" data-act="sel-ref" data-id="${esc(id)}"><span class="grow">${esc(id)}</span>${placed ? '<span class="badge on">placed</span>' : ""}</li>`;
+    }).join("") || '<p class="hint">No devices seen yet.</p>';
+    h += "</ul>";
+    const r = plan.references.find((r) => r.device === sel);
+    if (r) h += `<div class="row"><label>x / y</label>${r.x} / ${r.y} m · ${esc(roomAt([r.x, r.y]) || "?")}</div>
+      <div class="row"><button class="danger" data-act="del-ref">Remove</button></div>`;
+    else if (sel) h += `<p class="hint">Tap the map to place <b>${esc(sel)}</b>.</p>`;
+    return h;
+  },
+  background() {
+    const b = plan.background;
+    let h = `<h3>Floor plan image</h3><div class="row"><input type="file" accept="image/png,image/jpeg" data-act="upload"></div>
+      <p class="hint">Optional: you can also draw on the grid alone.</p>`;
+    if (b?.image) {
+      h += `<h3>Scale</h3>`;
+      if (scalePts?.length === 2) {
+        const d = Math.hypot(scalePts[1][0] - scalePts[0][0], scalePts[1][1] - scalePts[0][1]);
+        h += `<p>Line: ${d.toFixed(2)} m on the current scale.</p><div class="row"><label>Real length</label><input type="number" step="0.01" data-act="scale-len" value="${d.toFixed(2)}"> m <button class="primary" data-act="scale-apply">Apply</button></div>`;
+      } else {
+        h += `<div class="row"><button data-act="scale-start" class="${scalePts ? "primary" : ""}">${scalePts ? `Tap point ${scalePts.length + 1} of 2…` : "Draw a line of known length"}</button></div>`;
+      }
+      h += `<div class="row"><label>Offset x</label><input type="number" step="0.05" data-act="bg-x" value="${b.x || 0}"> y <input type="number" step="0.05" data-act="bg-y" value="${b.y || 0}"></div>
+        <div class="row"><label>Opacity</label><input type="range" min="0.1" max="1" step="0.05" data-act="bg-opacity" value="${b.opacity ?? 0.6}"></div>
+        <div class="row"><button class="danger" data-act="bg-remove">Remove image</button></div>`;
+    }
+    h += `<h3>Import</h3><div class="row"><label>ESPresense</label><input type="file" accept=".yaml,.yml" data-act="espresense"></div>
+      <p class="hint">An ESPresense companion config.yaml: rooms and nodes of its first floor replace this plan (not saved until you press Save). ESPresense has no doors, so every shared wall gets one in the middle: fix them under Walls & doors.</p>`;
+    return h;
+  },
+};
+
+function renderPanel() { $("#panel").innerHTML = PANELS[mode](); }
+
+$("#panel").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-act]");
+  if (!t || t.tagName === "INPUT" || t.tagName === "SELECT") return;
+  const act = t.dataset.act, id = t.dataset.id;
+  if (act === "draw-poly" || act === "draw-rect") map.pm.enableDraw(act === "draw-poly" ? "Polygon" : "Rectangle", { snappable: true, snapDistance: 14 });
+  else if (act === "sel-room") { sel = id; drawRooms(); renderPanel(); }
+  else if (act === "del-room") { deleteRoom(sel); sel = null; changed(); }
+  else if (act === "add-door") { addingDoor = !addingDoor; renderPanel(); }
+  else if (act === "sel-door") { sel = `door:${id}`; changed({ rooms: false }); }
+  else if (act === "del-door") { plan.doors.splice(+sel.slice(5), 1); sel = null; changed({ rooms: false }); }
+  else if (act === "sel-rx") { sel = id; renderPanel(); drawMarkers(); }
+  else if (act === "new-rx") { const v = $('[data-act="new-rx-id"]').value.trim(); if (v) { sel = v; renderPanel(); } }
+  else if (act === "del-rx") { plan.receivers = plan.receivers.filter((r) => r.id !== sel); changed({ rooms: false }); }
+  else if (act === "sel-ref") { sel = id; renderPanel(); drawMarkers(); }
+  else if (act === "del-ref") { plan.references = plan.references.filter((r) => r.device !== sel); changed({ rooms: false }); }
+  else if (act === "scale-start") { scalePts = []; layers.tool.clearLayers(); renderPanel(); }
+  else if (act === "scale-apply") {
+    const d = Math.hypot(scalePts[1][0] - scalePts[0][0], scalePts[1][1] - scalePts[0][1]);
+    const want = +$('[data-act="scale-len"]').value;
+    if (d > 0 && want > 0) {
+      plan.background.scale *= want / d;  // scales around the image's top-left corner (the offset)
+    }
+    scalePts = null; layers.tool.clearLayers(); drawBackground(); changed({ rooms: false });
+  }
+  else if (act === "bg-remove") { delete plan.background; bgSize = null; drawBackground(); changed({ rooms: false }); }
+});
+
+$("#panel").addEventListener("change", async (e) => {
+  const t = e.target, act = t.dataset.act;
+  if (act === "device") { device = t.value; poll(); }
+  else if (act === "heat") { showHeat = t.checked; drawLive(); }
+  else if (act === "max-gap") { plan.max_gap = +t.value || 0.4; changed({ rooms: false }); }
+  else if (act === "rename") { if (renameRoom(sel, t.value.trim())) { sel = t.value.trim(); changed(); } else renderPanel(); }
+  else if (act === "mat-interior" || act === "mat-exterior") { plan.materials[act.slice(4)] = t.value; changed({ rooms: false }); }
+  else if (act === "mat-wall") {
+    const rooms = sel.split("|");
+    plan.walls = plan.walls.filter((w) => [...w.rooms].sort().join("|") !== sel);
+    const def = rooms.length === 2 ? plan.materials.interior : plan.materials.exterior;
+    if (t.value !== def) plan.walls.push({ rooms, material: t.value });
+    changed({ rooms: false });
+  }
+  else if (act === "door-width") { plan.doors[+sel.slice(5)].width = +t.value || 0.8; changed({ rooms: false }); }
+  else if (act === "rx-z") { plan.receivers.find((r) => r.id === sel).z = +t.value; changed({ rooms: false }); }
+  else if (act === "rx-p0") {
+    const r = plan.receivers.find((r) => r.id === sel);
+    if (t.value === "") delete r.p0; else r.p0 = +t.value;
+    changed({ rooms: false });
+  }
+  else if (act === "bg-x" || act === "bg-y") { plan.background[act.slice(3)] = +t.value; drawBackground(); changed({ rooms: false }); }
+  else if (act === "upload" && t.files[0]) {
+    try {
+      const { image } = await api("api/background", { method: "PUT", headers: { "Content-Type": t.files[0].type }, body: t.files[0] });
+      const old = plan.background;
+      plan.background = { image, x: old?.x || 0, y: old?.y || 0, scale: old?.scale || 0, opacity: old?.opacity ?? 0.6, v: Date.now() };
+      const img = new Image();
+      img.onload = () => {
+        bgSize = [img.naturalWidth, img.naturalHeight];
+        if (!plan.background.scale) plan.background.scale = 10 / img.naturalWidth;  // start at 10 m wide
+        drawBackground(); map.fitBounds(bounds()); changed({ rooms: false });
+      };
+      img.src = `api/background/${encodeURIComponent(image)}?v=${plan.background.v}`;
+    } catch (err) { setStatus(err.message, true); }
+  }
+  else if (act === "espresense" && t.files[0]) {
+    try {
+      const { plan: p } = await api("api/import/espresense", { method: "POST", body: await t.files[0].text() });
+      const bg = plan.background;
+      plan = normalize(p);
+      if (bg) plan.background = bg;
+      sel = null; changed(); map.fitBounds(bounds());
+    } catch (err) { setStatus(err.message, true); }
+  }
+});
+
+$("#panel").addEventListener("input", (e) => {
+  if (e.target.dataset.act === "bg-opacity") { plan.background.opacity = +e.target.value; drawBackground(); refreshButtons(); }
+});
+
+// --- map interaction ----------------------------------------------------------
+
+map.on("pm:create", (e) => {
+  const pts = e.layer.getLatLngs()[0].map(xy);
+  e.layer.remove();
+  let n = Object.keys(plan.rooms).length + 1;
+  while (plan.rooms[`Room ${n}`]) n++;
+  const name = `Room ${n}`;
+  plan.rooms[name] = straighten(pts, Object.values(plan.rooms));
+  sel = name;
+  changed();
+});
+
+map.on("click", (e) => {
+  const p = xy(e.latlng);
+  if (mode === "receivers" && sel) {
+    let r = plan.receivers.find((r) => r.id === sel);
+    if (!r) plan.receivers.push((r = { id: sel, x: p[0], y: p[1], z: 1.0 }));
+    else { [r.x, r.y] = p; delete r.room; }
+    changed({ rooms: false });
+  } else if (mode === "refs" && sel) {
+    let r = plan.references.find((r) => r.device === sel);
+    if (!r) plan.references.push({ device: sel, x: p[0], y: p[1] });
+    else [r.x, r.y] = p;
+    changed({ rooms: false });
+  } else if (mode === "background" && scalePts) {
+    scalePts.push(p);
+    L.circleMarker(e.latlng, { radius: 4, pmIgnore: true }).addTo(layers.tool);
+    if (scalePts.length === 2) L.polyline(scalePts.map(([x, y]) => ll(x, y)), { dashArray: "4", pmIgnore: true }).addTo(layers.tool);
+    renderPanel();
+  } else if (mode === "rooms" && sel && !map.pm.globalDrawModeEnabled()) {
+    sel = null; drawRooms(); renderPanel();
+  } else if (mode === "walls" && !addingDoor && sel) {
+    sel = null; changed({ rooms: false });
+  }
+});
+
+function setMode(m) {
+  map.pm.disableDraw();
+  mode = m; sel = null; addingDoor = false; scalePts = null;
+  layers.tool.clearLayers();
+  $("#tabs").innerHTML = Object.entries(MODES).map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? "on" : ""}">${v}</button>`).join("");
+  drawPlan(); drawLive(); renderPanel();
+}
+$("#tabs").addEventListener("click", (e) => { const m = e.target.dataset.mode; if (m) setMode(m); });
+
+$("#save").addEventListener("click", async () => {
+  try {
+    const out = await api("api/plan", { method: "PUT", body: JSON.stringify(plan) });
+    saved = JSON.stringify(plan);
+    derived = out.derived;
+    setStatus("Saved; tracking restarted on the new plan");
+    setTimeout(refreshButtons, 2500);
+    drawPlan(); renderPanel();
+  } catch (err) { setStatus(err.message, true); }
+});
+$("#revert").addEventListener("click", () => {
+  plan = JSON.parse(saved); sel = null; loadBackground(); changed();
+});
+window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });
+
+// --- live polling -------------------------------------------------------------
+
+async function poll() {
+  try {
+    live = await api(`api/state${device ? `?device=${encodeURIComponent(device)}` : ""}`);
+  } catch { return; }
+  if (!device && Object.keys(live.devices || {}).length) { device = Object.keys(live.devices)[0]; if (mode === "live") renderPanel(); }
+  if (mode === "live") {
+    drawLive();
+    drawRooms();
+    const info = $("#liveinfo");
+    if (info) info.innerHTML = liveInfo();
+  }
+  const online = JSON.stringify(live.online);
+  if (online !== lastOnline && !dragging && !editing) { lastOnline = online; drawMarkers(); }
+  if (!dirty() && !planError) setStatus(liveStatus());
+}
+
+(async function init() {
+  const res = await api("api/plan");
+  materials = res.materials;
+  plan = normalize(res.plan);
+  saved = JSON.stringify(plan);
+  derived = res.derived;
+  planError = res.error;
+  loadBackground();
+  setMode("live");
+  map.fitBounds(bounds(), { padding: [20, 20] });
+  refreshButtons();
+  poll();
+  setInterval(poll, 1000);
+})();
+</script>
+</body>
+</html>

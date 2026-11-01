@@ -16,7 +16,7 @@
       packages = forAll (pkgs: rec {
         reiatsu = pkgs.python3Packages.buildPythonPackage {
           pname = "reiatsu";
-          version = "0.2.0";
+          version = "0.3.0";
           pyproject = true;
           src = ./.;
           build-system = [ pkgs.python3Packages.setuptools ];
