@@ -1,0 +1,71 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Reiatsu Bridge",
+        "description": "Forwards every scanner's sightings of your tracked devices, plus mmWave states, to MQTT for the Reiatsu daemon. Add devices afterwards under Configure.",
+        "data": {
+          "topic_prefix": "MQTT topic prefix",
+          "poll_interval": "Publish interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_topic": "Topic prefix must not be empty or contain spaces, + or #."
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "add_device": "Add a device",
+          "remove_device": "Remove devices",
+          "receivers": "Name receivers",
+          "mmwave": "mmWave sensors",
+          "settings": "Settings"
+        }
+      },
+      "settings": {
+        "data": {
+          "topic_prefix": "MQTT topic prefix",
+          "poll_interval": "Publish interval (seconds)"
+        }
+      },
+      "add_device": {
+        "description": "Identifier: the phone's IRK (hex or base64, as for Private BLE Device) or a fixed MAC address. The IRK stays in this config entry and is never logged or published.",
+        "data": {
+          "name": "Friendly name (published as its slug, e.g. mirza_iphone)",
+          "identifier": "IRK or MAC address"
+        }
+      },
+      "remove_device": {
+        "data": {
+          "names": "Devices to remove"
+        }
+      },
+      "receivers": {
+        "description": "Receiver id per scanner. They must match the receiver ids in your floor plan.\n\n{scanners}"
+      },
+      "mmwave": {
+        "data": {
+          "entities": "Presence binary sensors"
+        }
+      },
+      "mmwave_areas": {
+        "description": "Room or zone name per sensor. They must match the floor plan names exactly. Sensors sharing a name are combined (occupied if any is on)."
+      }
+    },
+    "error": {
+      "invalid_topic": "Topic prefix must not be empty or contain spaces, + or #.",
+      "name_taken": "Name is empty or already used.",
+      "invalid_identifier": "Not a valid IRK (16 bytes, hex or base64) or MAC address."
+    },
+    "abort": {
+      "no_devices": "No devices configured.",
+      "no_scanners": "No Bluetooth scanners found."
+    }
+  }
+}

@@ -1,9 +1,4 @@
-"""Stream interface: adverts and occupancy in, per-device estimates out.
-
-Phase 2 feeds this from Home Assistant's Bluetooth advertisement stream
-(stock ESPHome BT proxies) or a generic MQTT topic, and publishes the
-estimates over MQTT (with HA discovery).
-"""
+"""Stream interface: adverts and occupancy in, per-device estimates out (see daemon.py)."""
 
 from __future__ import annotations
 

@@ -59,9 +59,9 @@ class Tracker:
     p_move_silent: float = 0.01
     p_jump: float = 3e-3  # per second: moved somewhere unseen, keeps far rooms recoverable
     silent_after: float = 30.0
-    hysteresis: float = 0.15
+    hysteresis: float = 0.3  # room switches only when another room leads by this much probability
     mmwave_fnr: float = 0.15  # P(sensor reports empty | device's person is in the area)
-    mmwave_p_other: float = 0.3  # P(area reported occupied | device not there): other people, false alarms
+    mmwave_p_other: float = 0.5  # P(area reported occupied | device not there): other residents, false alarms
     mmwave_tau: float = 5.0  # seconds of a persisting sensor state worth one independent observation
     offsets: np.ndarray = field(default_factory=lambda: np.arange(-12.0, 12.1, 2.0))  # dB, this device vs the calibration phone
     offset_sd: float = 6.0  # prior on the device's tx offset

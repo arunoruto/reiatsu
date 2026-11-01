@@ -7,5 +7,7 @@ RUN pip install --no-cache-dir .
 COPY sim sim
 COPY examples examples
 
-# Phase 1 has no service yet: the image runs the simulator.
-CMD ["python", "-m", "sim.run", "--scenario", "default"]
+# Mount your floor plan at /config/plan.yaml; MQTT settings via REIATSU_MQTT_* env.
+# The simulator still ships: docker run --rm IMAGE python -m sim.run
+ENV REIATSU_PLAN=/config/plan.yaml
+CMD ["reiatsu"]

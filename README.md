@@ -22,8 +22,9 @@
 </div>
 
 > [!WARNING]
-> **Project status: early, phase 1.** The engine and the simulator work and are tested.
-> Nothing talks to Home Assistant or MQTT yet, and the Docker image only runs the simulator.
+> **Project status: early, phase 2.** The engine, the simulator, the MQTT daemon and the
+> Home Assistant bridge work and are tested, but haven't been tried on real data yet.
+> There's no calibration CLI yet, so the daemon runs on the channel priors.
 > Anything marked *planned* below doesn't exist yet.
 
 <details>
@@ -78,16 +79,18 @@ what they leave out:
 ```mermaid
 flowchart LR
     P[Phone BLE adverts] --> E[ESPHome BT proxies]
-    E --> HA[Home Assistant<br/>Bluetooth stream]
-    E -.-> M[MQTT]
+    E --> HA[Home Assistant<br/>reiatsu_bridge]
     S[mmWave sensors] --> HA
-    HA --> R[Reiatsu]
-    M -.-> R
-    R --> O[MQTT / HA entities<br/>room, probabilities, x/y]
+    HA -->|reiatsu/adverts<br/>reiatsu/occupancy/+| M[MQTT broker]
+    X[anything else] -.-> M
+    M --> R[Reiatsu daemon]
+    R -->|HA discovery<br/>room, probabilities, x/y| M
 ```
 
-*Phase 1 implements the `Reiatsu` box, fed by the simulator. The input and output
-arrows are planned for phase 2.*
+HA's own Bluetooth advertisement stream keeps only the strongest proxy per device,
+which is exactly the information Reiatsu can't do without. The small `reiatsu_bridge`
+integration subscribes to every advert of your tracked devices from every proxy, and
+forwards them to MQTT. The daemon itself speaks only MQTT, so it doesn't need HA.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -112,18 +115,42 @@ arrows are planned for phase 2.*
 Either of:
 
 * Nix with flakes enabled
-* Python ≥ 3.12 (dependencies: numpy, scipy, pyyaml; pytest for the tests)
+* Python ≥ 3.12 (dependencies: numpy, scipy, pyyaml, paho-mqtt; pytest for the tests)
 * Docker
 
+For the Home Assistant bridge: HA ≥ 2026.10 with the Bluetooth and MQTT integrations
+set up (e.g. with the Mosquitto add-on).
+
 ### Installation
+
+**Home Assistant bridge (HACS)**
+
+1. HACS → ⋮ → *Custom repositories* → add `https://github.com/arunoruto/reiatsu`,
+   type *Integration*. Install *Reiatsu Bridge* and restart HA.
+2. *Settings → Devices & services → Add integration → Reiatsu Bridge*. Pick the topic
+   prefix (default `reiatsu`) and publish interval (default 1 s).
+3. *Configure* the entry:
+   * **Add a device**: a friendly name plus the phone's IRK (hex or base64, as for
+     *Private BLE Device*) or a fixed MAC. The device is published as the slug of
+     its name (`Mirza iPhone` → `mirza_iphone`). The IRK stays in the config
+     entry: it's never logged or published, and it's redacted from diagnostics.
+   * **Name receivers**: a receiver id per Bluetooth scanner. They must match the
+     `receivers` ids in your floor plan.
+   * **mmWave sensors**: presence binary sensors, each mapped to a room or zone name
+     from the floor plan. Sensors sharing a name are combined (occupied if any is on).
+
+Without HACS, copy `custom_components/reiatsu_bridge` into your HA config directory.
+The bridge only reads from HA's Bluetooth manager, so Bermuda and *Private BLE
+Device* keep working alongside it.
 
 **Nix (dev shell or package)**
 
 ```sh
 git clone https://github.com/arunoruto/reiatsu.git
 cd reiatsu
-nix develop                      # python with numpy, scipy, pyyaml, pytest
-nix build .#reiatsu              # builds the package and runs the tests
+nix develop                      # python with numpy, scipy, pyyaml, paho-mqtt, pytest
+nix build .#reiatsu              # builds the package (with the `reiatsu` daemon) and runs the tests
+nix develop .#ha -c pytest tests_ha   # bridge tests against Home Assistant from nixpkgs
 ```
 
 As a flake input:
@@ -131,12 +158,11 @@ As a flake input:
 ```nix
 {
   inputs.reiatsu.url = "github:arunoruto/reiatsu";
-  # reiatsu.packages.${system}.default is the Python package
+  # reiatsu.packages.${system}.default is the Python package with the `reiatsu` daemon
 }
 ```
 
-A NixOS module (`services.reiatsu`) is *planned* for phase 2, once there is a
-service to run.
+A NixOS module (`services.reiatsu`) is *planned*.
 
 **Python**
 
@@ -150,23 +176,26 @@ pip install -e '.[test]'
 
 Images for `linux/amd64` and `linux/arm64` are published to
 `ghcr.io/arunoruto/reiatsu`: `:edge` follows `main`, and a tag `vX.Y.Z` publishes
-`:X.Y.Z`, `:X.Y` and `:latest`. For now the image runs the simulator:
-
-```sh
-docker run --rm ghcr.io/arunoruto/reiatsu:edge
-docker run --rm ghcr.io/arunoruto/reiatsu:edge python -m sim.run --scenario quick
-```
+`:X.Y.Z`, `:X.Y` and `:latest`. The image runs the daemon, with the floor plan at
+`/config/plan.yaml`:
 
 ```yaml
 # compose.yaml
 services:
   reiatsu:
     image: ghcr.io/arunoruto/reiatsu:edge
-    command: python -m sim.run --scenario default
+    restart: unless-stopped
+    volumes:
+      - ./config:/config            # plan.yaml; recordings go here too
+    environment:
+      REIATSU_MQTT_HOST: 192.168.1.10
+      REIATSU_MQTT_USER: reiatsu
+      REIATSU_MQTT_PASSWORD: ${REIATSU_MQTT_PASSWORD}
+      REIATSU_RECORD: /config/record.jsonl   # optional: log raw input for replay
 ```
 
-GHCR packages start out private. Make it public once under the package settings
-(*Package settings → Change visibility*) so pulls work without logging in.
+The simulator still ships in the image:
+`docker run --rm ghcr.io/arunoruto/reiatsu:edge python -m sim.run --scenario quick`.
 
 **Home Assistant add-on**: *planned*. This repo will be addable as an add-on
 repository, with the add-on using the GHCR images above.
@@ -176,6 +205,36 @@ repository, with the add-on using the GHCR images above.
 
 
 ## Usage
+
+### Daemon
+
+```sh
+reiatsu --plan plan.yaml --mqtt-host broker.lan               # live
+reiatsu --plan plan.yaml --record record.jsonl                # live, and log the raw input
+reiatsu --plan plan.yaml --replay record.jsonl > out.jsonl    # offline: estimates per second
+```
+
+Every option also reads an environment variable (`REIATSU_PLAN`, `REIATSU_MQTT_HOST`,
+`REIATSU_MQTT_PORT`, `REIATSU_MQTT_USER`, `REIATSU_MQTT_PASSWORD`, `REIATSU_PREFIX`,
+`REIATSU_DISCOVERY_PREFIX`, `REIATSU_RECORD`). Pass the password through the
+environment, not the command line. Topics, with the default prefix `reiatsu`:
+
+| topic | direction | payload |
+|---|---|---|
+| `reiatsu/adverts` | in | `{ts, receiver_id, device_id, rssi}` or a list of them |
+| `reiatsu/occupancy/<area>` | in (retained) | `{ts, area, occupied}` |
+| `reiatsu/<device_id>/state` | out | `{ts, room, x, y, sigma, room_probs}` |
+| `reiatsu/status` | out (retained) | `online` / `offline` (last will) |
+| `homeassistant/sensor/reiatsu_<device_id>/<room\|x\|y\|sigma>/config` | out (retained) | MQTT discovery |
+
+In HA each device shows up with a *Room* sensor (with the room probabilities as
+attributes) plus *X*, *Y* and *Position uncertainty* in metres. State is published
+when the room changes, otherwise every 5 s (`--publish-interval`). Adverts from
+receivers that aren't in the plan are ignored, with one warning per receiver.
+
+The recording is one JSON object per line (`{"type": "advert", ...}` or
+`{"type": "occupancy", ...}`). Replay runs it through the same code path as live,
+so you can re-run a real day after changing the plan or the tracker.
 
 ### Simulator
 
@@ -207,13 +266,13 @@ error against the hidden truth.
 | config | room acc | acc awake | acc locked | time to correct room (s) | false flips/h | pos err (m) | RSSI map err (dB) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | baseline: nearest receiver (Bermuda-like) | 56.8% ± 7.9 | 70.4% ± 5.7 | 51.7% ± 9.0 | 34 ± 6 | 19.8 ± 4.6 | 2.65 ± 0.44 | – |
-| priors only | 60.4% ± 9.0 | 70.9% ± 13.2 | 55.7% ± 8.8 | 34 ± 15 | 14.6 ± 3.4 | 1.42 ± 0.15 | 7.2 ± 1.0 |
-| node-to-node only | 66.2% ± 2.9 | 80.2% ± 3.6 | 60.8% ± 5.2 | 31 ± 8 | 13.7 ± 2.6 | 1.25 ± 0.08 | 7.2 ± 1.5 |
-| survey: starter | 68.5% ± 6.0 | 80.5% ± 9.0 | 63.4% ± 8.2 | 25 ± 11 | 11.7 ± 3.3 | 1.18 ± 0.11 | 1.8 ± 0.3 |
-| survey: +10 active | 67.7% ± 3.8 | 81.2% ± 9.7 | 62.2% ± 5.0 | 26 ± 10 | 11.3 ± 3.1 | 1.18 ± 0.11 | 1.6 ± 0.3 |
-| survey: +10 random | 68.7% ± 5.2 | 81.3% ± 8.5 | 63.4% ± 7.1 | 26 ± 10 | 11.9 ± 4.0 | 1.19 ± 0.11 | 1.6 ± 0.3 |
-| survey: +10 active, no walls | 66.3% ± 5.3 | 79.2% ± 5.3 | 61.0% ± 7.8 | 29 ± 12 | 11.0 ± 4.6 | 1.30 ± 0.11 | 4.4 ± 1.0 |
-| survey: +10 active + mmWave | 77.0% ± 3.6 | 86.4% ± 9.2 | 73.3% ± 1.9 | 14 ± 6 | 17.3 ± 3.2 | 1.08 ± 0.11 | 1.6 ± 0.3 |
+| priors only | 60.4% ± 9.2 | 70.7% ± 13.4 | 55.7% ± 9.1 | 36 ± 12 | 12.1 ± 2.9 | 1.41 ± 0.15 | 7.2 ± 1.0 |
+| node-to-node only | 65.5% ± 2.9 | 80.1% ± 3.6 | 59.9% ± 4.9 | 33 ± 9 | 11.1 ± 3.0 | 1.25 ± 0.08 | 7.2 ± 1.5 |
+| survey: starter | 69.2% ± 6.5 | 80.5% ± 8.9 | 64.4% ± 8.6 | 25 ± 9 | 9.7 ± 2.7 | 1.17 ± 0.12 | 1.8 ± 0.3 |
+| survey: +10 active | 68.4% ± 4.5 | 81.2% ± 9.9 | 63.2% ± 4.9 | 26 ± 10 | 8.3 ± 1.8 | 1.18 ± 0.12 | 1.6 ± 0.3 |
+| survey: +10 random | 69.1% ± 4.3 | 81.3% ± 8.5 | 64.1% ± 5.2 | 25 ± 9 | 9.6 ± 2.7 | 1.19 ± 0.12 | 1.6 ± 0.3 |
+| survey: +10 active, no walls | 67.8% ± 5.5 | 79.6% ± 4.8 | 62.9% ± 8.3 | 29 ± 13 | 8.3 ± 3.2 | 1.27 ± 0.11 | 4.4 ± 1.0 |
+| survey: +10 active + mmWave | 77.0% ± 2.6 | 85.2% ± 8.2 | 73.7% ± 1.9 | 19 ± 7 | 12.7 ± 1.7 | 1.10 ± 0.10 | 1.6 ± 0.3 |
 
 *`--scenario default`, seeds 1–5, mean ± sd.* What the numbers say so far:
 
@@ -227,7 +286,12 @@ error against the hidden truth.
   node-to-node calibration alone works even though it can't pin the phone's
   absolute power.
 * Realistic mmWave coverage adds about 9 points. With sensors in every room and
-  nobody else home (`ideal-mmwave`), it reaches about 93%.
+  nobody else home (`ideal-mmwave`), it reaches about 91%.
+* An occupied sensor only mildly pulls the phone into its room (`mmwave_p_other =
+  0.5`, since another resident may have triggered it), and the reported room
+  switches only on a 0.3 probability lead. Together these cut false flips with
+  mmWave from 17 to 13 per hour at the same accuracy. Letting only "empty" reports
+  count (no pull at all) cut flips further but cost about 5 points.
 
 ### Floor plan
 
@@ -308,9 +372,9 @@ for est in loc.tick(ts):                        # about once per second
     - [x] Survey planner: starter set and active learning
     - [x] Simulator, Bermuda-like baseline, metrics and ablations
 - [ ] Phase 2: service
-    - [ ] Input from Home Assistant's Bluetooth advertisement stream (stock ESPHome proxies)
-    - [ ] Generic MQTT input for setups without HA
-    - [ ] MQTT output with HA discovery
+    - [x] `reiatsu_bridge` HA integration: every proxy's adverts (IRK or MAC) and mmWave states to MQTT
+    - [x] MQTT-only daemon with HA discovery, record and replay
+    - [ ] Calibration CLI (survey, node-to-node) and loading fitted parameters in the daemon
     - [ ] NixOS module `services.reiatsu`, Home Assistant add-on
 - [ ] Phase 3: web UI (floor plan editor, live map, calibration survey wizard)
 
@@ -326,7 +390,7 @@ Contributions are welcome. Open an issue first if you plan a larger change.
 
 1. Fork the Project
 2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Run the tests (`nix develop -c pytest -q` or `pytest -q`)
+3. Run the tests (`nix develop -c pytest -q` or `pytest -q`; bridge: `nix develop .#ha -c pytest tests_ha`)
 4. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 5. Push to the Branch (`git push origin feature/AmazingFeature`)
 6. Open a Pull Request

@@ -16,3 +16,24 @@ jobs:
       - run: pip install -e .[test]
       - run: pytest -q
       - run: python -m sim.run --scenario default --seeds 5 --check
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop .#ha -c pytest tests_ha -q -p no:logging
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          ignore: brands

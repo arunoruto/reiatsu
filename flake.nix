@@ -16,7 +16,7 @@
       packages = forAll (pkgs: rec {
         reiatsu = pkgs.python3Packages.buildPythonPackage {
           pname = "reiatsu";
-          version = "0.1.0";
+          version = "0.2.0";
           pyproject = true;
           src = ./.;
           build-system = [ pkgs.python3Packages.setuptools ];
@@ -24,6 +24,7 @@
             numpy
             scipy
             pyyaml
+            paho-mqtt
           ];
           nativeCheckInputs = [ pkgs.python3Packages.pytestCheckHook ];
         };
@@ -31,6 +32,20 @@
       });
 
       devShells = forAll (pkgs: {
+        # bridge tests against nixpkgs Home Assistant: nix develop .#ha -c pytest tests_ha
+        ha = pkgs.mkShell {
+          packages = [
+            (pkgs.home-assistant.python3Packages.python.withPackages (
+              p:
+              [
+                p.pytest
+                p.pytest-homeassistant-custom-component
+              ]
+              ++ pkgs.home-assistant.getPackages "bluetooth" p
+              ++ pkgs.home-assistant.getPackages "mqtt" p
+            ))
+          ];
+        };
         default = pkgs.mkShell {
           packages = [
             (pkgs.python3.withPackages (
@@ -38,6 +53,7 @@
                 numpy
                 scipy
                 pyyaml
+                paho-mqtt
                 pytest
               ]
             ))

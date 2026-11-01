@@ -3,3 +3,5 @@
 result
 **/__pycache__
 tests
+tests_ha
+custom_components
