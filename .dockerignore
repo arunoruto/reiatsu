@@ -1,0 +1,5 @@
+.git
+.github
+result
+**/__pycache__
+tests
