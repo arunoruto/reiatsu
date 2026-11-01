@@ -201,8 +201,17 @@ services:
 The simulator still ships in the image:
 `docker run --rm ghcr.io/arunoruto/reiatsu:edge python -m sim.run --scenario quick`.
 
-**Home Assistant add-on**: *planned*. This repo will be addable as an add-on
-repository, with the add-on using the GHCR images above.
+**Home Assistant add-on**
+
+*Settings → Add-ons → Add-on store → ⋮ → Repositories* → add
+`https://github.com/arunoruto/reiatsu`, then install **Reiatsu** (amd64, aarch64; it
+pulls the GHCR image matching its version). It needs the Mosquitto broker: the
+Supervisor hands the add-on the broker credentials, so there is nothing to configure
+apart from the options (record on/off, topic prefix, log level). Open **Reiatsu** in
+the sidebar; the web UI runs through ingress, so HA handles the login. The plan, the
+background image and `record.jsonl` live in the add-on config folder
+(`/addon_configs/<id>_reiatsu/`). The add-on's Documentation tab covers moving over
+from a hand-run daemon.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -245,7 +254,7 @@ starts empty and you draw the plan in the UI.
 
 > [!CAUTION]
 > The UI has no authentication and can overwrite your plan. Keep it on your LAN (or bind
-> it to `127.0.0.1`), or behind Home Assistant ingress once the add-on exists.
+> it to `127.0.0.1`), or use the Home Assistant add-on, where it sits behind ingress.
 
 * **Background**: upload a PNG or JPEG floor plan, then draw a line of known length to
   set the scale. Or import an ESPresense companion `config.yaml` (rooms and nodes of a
@@ -425,7 +434,8 @@ for est in loc.tick(ts):                        # about once per second
     - [x] MQTT-only daemon with HA discovery, record and replay
     - [x] Web UI v1: plan editor (image + scale, rooms, walls, doors, receivers, references), ESPresense import, live map
     - [ ] Calibration CLI (survey, node-to-node) and loading fitted parameters in the daemon
-    - [ ] NixOS module `services.reiatsu`, Home Assistant add-on (with ingress)
+    - [x] Home Assistant add-on with ingress, MQTT credentials from the Supervisor
+    - [ ] NixOS module `services.reiatsu`
 - [ ] Phase 3
     - [ ] Calibration survey wizard in the web UI ("stand here, press, 30 s, next point")
     - [ ] SVG export with per-room ids for [ha-floorplan](https://github.com/ExperienceLovelace/ha-floorplan)

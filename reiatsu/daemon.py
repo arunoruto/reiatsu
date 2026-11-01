@@ -253,9 +253,10 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--discovery-prefix", default=env("REIATSU_DISCOVERY_PREFIX", "homeassistant"), help="[REIATSU_DISCOVERY_PREFIX]")
     ap.add_argument("--http-port", type=int, default=int(env("REIATSU_HTTP_PORT", "8099")), help="web UI port, 0 = off [REIATSU_HTTP_PORT]")
     ap.add_argument("--http-bind", default=env("REIATSU_HTTP_BIND", "0.0.0.0"), help="web UI address; no auth, keep it on the LAN [REIATSU_HTTP_BIND]")
+    ap.add_argument("--log-level", default=env("REIATSU_LOG_LEVEL", "info"), choices=["debug", "info", "warning", "error"], help="[REIATSU_LOG_LEVEL]")
     ap.add_argument("--publish-interval", type=float, default=5.0, help="seconds between state updates while the room is unchanged")
     args = ap.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(message)s")
 
     if not args.replay and args.http_port and not os.path.exists(args.plan):
         log.info("no plan at %s yet: draw one in the web UI", args.plan)

@@ -1,0 +1,11 @@
+configuration:
+  record:
+    name: Record
+    description: Append all raw input to record.jsonl in the add-on config folder, for replay.
+  topic_prefix:
+    name: Topic prefix
+    description: MQTT topic prefix, the same as in the Reiatsu Bridge integration.
+  log_level:
+    name: Log level
+network:
+  8099/tcp: Web UI without ingress (no authentication, leave empty unless you need it).

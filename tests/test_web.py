@@ -35,6 +35,7 @@ def server(tmp_path):
         except urllib.error.HTTPError as err:
             return err.code, json.loads(err.read())
 
+    call.base = base
     yield call, app, plan, saved
     srv.shutdown()
 
@@ -47,6 +48,13 @@ def test_ui_and_plan(server):
     status, res = call("api/plan")
     assert res["error"] is None and "Hallway" in res["derived"]["rooms"]
     assert len(res["derived"]["cells"]) > 1000 and "concrete" in res["materials"]
+
+
+def test_ingress_base_path(server):
+    call, *_ = server
+    req = urllib.request.Request(call.base, headers={"X-Ingress-Path": "/api/hassio_ingress/abc"})
+    with urllib.request.urlopen(req) as r:
+        assert b'<base href="/api/hassio_ingress/abc/">' in r.read()
 
 
 def test_save_validates_backs_up_and_reloads(server):

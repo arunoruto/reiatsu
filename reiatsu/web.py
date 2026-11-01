@@ -15,6 +15,7 @@ saving writes it (keeping ``<plan>.bak``) and restarts tracking on the new plan.
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import mimetypes
@@ -149,7 +150,12 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         path = url.path.rstrip("/").split("/")[-2:] if url.path.startswith("/api/") else None
         if url.path in ("", "/", "/index.html"):
-            return self._send(200, (STATIC / "index.html").read_bytes(), "text/html; charset=utf-8")
+            page = (STATIC / "index.html").read_bytes()
+            if prefix := self.headers.get("X-Ingress-Path"):
+                # HA ingress: pin relative URLs to the prefix, even if the page URL lacks its trailing slash
+                base = f'<head>\n<base href="{html.escape(prefix.rstrip("/"))}/">'.encode()
+                page = page.replace(b"<head>", base, 1)
+            return self._send(200, page, "text/html; charset=utf-8")
         if url.path.startswith("/vendor/"):
             f = STATIC / "vendor" / Path(url.path).name
             if f.is_file():

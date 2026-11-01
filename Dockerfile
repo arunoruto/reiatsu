@@ -12,4 +12,5 @@ COPY examples examples
 # Web UI (plan editor, live map) on 8099, no auth: keep it on the LAN or behind HA ingress.
 ENV REIATSU_PLAN=/config/plan.yaml
 EXPOSE 8099
-CMD ["reiatsu"]
+# As a Home Assistant add-on, reads /data/options.json and the Supervisor's MQTT service.
+CMD ["python", "-m", "reiatsu.addon"]

@@ -37,3 +37,11 @@ jobs:
         with:
           category: integration
           ignore: brands description topics  # repo metadata, only needed for the HACS default store
+
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: frenck/action-addon-linter@v2
+        with:
+          path: ./addon
