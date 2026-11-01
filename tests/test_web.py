@@ -133,6 +133,8 @@ def test_plan_extensions():
     assert {w.material for w in walls if w.rooms == ("Kitchen",)} == {"brick"}
     with pytest.raises(ValueError):
         load_plan(raw | {"y_axis": "sideways"})
+    with pytest.raises(ValueError, match="negative"):
+        load_plan(raw | {"receivers": [{"id": "ha_usb", "x": 3, "y": 4, "p0": 70}]})
 
 
 def test_survey_capture_guidance_and_calibration(tmp_path):

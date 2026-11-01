@@ -136,6 +136,7 @@ let undoStack = [], redoStack = [], lastState = null;
 let surveyState = null, surveyError = null, capture = null, here = null, calPreview = null, captureTimer = null;
 const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 let surveyDevice = store.get("reiatsu.surveyDevice", ""), held = store.get("reiatsu.held", "hand");
+let freePoint = store.get("reiatsu.freePoint", "") === "1";  // survey: measure anywhere instead of following targets
 
 const map = L.map("map", { crs: L.CRS.Simple, minZoom: -3, maxZoom: 8, zoomSnap: 0.25, attributionControl: false });
 map.setView([0, 0], 4);
@@ -219,7 +220,7 @@ function orient(how) {
 }
 
 let flashUntil = 0;
-function flash(msg, err = false) { setStatus(msg, err); flashUntil = Date.now() + 4000; }
+function flash(msg, err = false) { flashUntil = 0; setStatus(msg, err); flashUntil = Date.now() + 4000; }
 
 function setStatus(msg, err = false) {
   if (Date.now() < flashUntil) return;  // a message the user should get to read
@@ -591,7 +592,7 @@ const PANELS = {
       h += `<h3>Receiver ${esc(r.id)}</h3>
         <div class="row"><label>Position</label>${r.x} / ${r.y} m · ${esc(derived?.receivers?.[r.id] || roomAt([r.x, r.y]) || "?")}</div>
         <div class="row"><label>Height z</label><input type="number" step="0.1" data-act="rx-z" value="${r.z ?? 1}"> m</div>
-        <div class="row"><label>P0</label><input type="number" step="1" data-act="rx-p0" value="${r.p0 ?? ""}" placeholder="prior"> dBm at 1 m</div>
+        <div class="row"><label>P0</label><input type="number" step="1" min="-100" max="-20" data-act="rx-p0" value="${r.p0 ?? ""}" placeholder="e.g. −59"> dBm at 1 m</div>
         <p class="hint">Leave P0 empty for the default (−59 dBm, or the calibrated value). Lower it for a receiver that hears badly, e.g. inside a cabinet.</p>
         <div class="row"><button class="danger" data-act="del-item">Remove from plan</button></div>`;
     } else if (ref) {
@@ -616,12 +617,17 @@ const PANELS = {
     const devs = deviceIds();
     if (!surveyDevice && devs.length) surveyDevice = devs[0];
     const t = s.next, loo = s.loo;
-    let h = `<div class="target">Go to <b>${esc(t.room)}</b>: ${esc(t.hint)}</div>
-      <p class="hint">Point ${t.done + 1} of ~${t.total}${t.phase === "active" ? " · extra points where the map is least certain" : ""}. Stand on the pulsing target, or drag the blue marker (or tap the map) to where you really are.</p>
-      <div class="row"><label>Device</label><select data-act="survey-device">${devs.map((d) => `<option ${d === surveyDevice ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+    let h = `<div class="row"><button data-act="survey-mode" data-id="guided" class="${freePoint ? "" : "primary"}">Follow targets</button><button data-act="survey-mode" data-id="free" class="${freePoint ? "primary" : ""}">Measure anywhere</button></div>`;
+    h += freePoint
+      ? `<div class="target">${here ? `Measure at <b>${esc(roomAt(here) || "?")}</b>` : "Tap the map where you are standing"}</div>
+        <p class="hint">Any spot works: tap your position (or drag the blue marker), then press Start. Point ${t.done + 1}.</p>`
+      : `<div class="target">Go to <b>${esc(t.room)}</b>: ${esc(t.hint)}</div>
+        <p class="hint">Point ${t.done + 1} of ~${t.total}${t.phase === "active" ? " · extra points where the map is least certain" : ""}. Stand on the pulsing target, or drag the blue marker (or tap the map) to where you really are. Not where the target is? Use <i>Measure anywhere</i>.</p>`;
+    h += `
+<div class="row"><label>Device</label><select data-act="survey-device">${devs.map((d) => `<option ${d === surveyDevice ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
       <div class="row"><label>Held</label><select data-act="held">${["hand", "pocket"].map((v) => `<option ${v === held ? "selected" : ""}>${v}</option>`).join("")}</select>
         <label style="min-width:0">for</label><input type="number" min="10" max="120" step="5" data-act="seconds" value="${store.get("reiatsu.seconds", 30)}"> s</div>
-      <div class="row"><button class="primary big" data-act="start-capture" ${devs.length ? "" : "disabled"}>Start</button></div>
+      <div class="row"><button class="primary big" data-act="start-capture" ${devs.length && here ? "" : "disabled"}>Start${freePoint ? " here" : ""}</button></div>
       <h3>Progress</h3><p>${s.points.length} point(s) · room accuracy ${loo.room_acc == null ? "–" : (loo.room_acc * 100).toFixed(0) + "%"}${loo.err_m == null ? "" : ` · median error ${loo.err_m.toFixed(1)} m`}</p>
       <p class="hint">Accuracy is leave-one-out: each point located with a calibration fitted on all the others.</p>`;
     if (s.plateau) h += `<p><b>Good enough:</b> accuracy has stopped improving. Calibrate and stop, or add points where it still guesses wrong.</p>`;
@@ -688,6 +694,12 @@ $("#panel").addEventListener("click", (e) => {
     sel = null; changed({ rooms: false });
   }
   else if (act === "start-capture") startCapture();
+  else if (act === "survey-mode") {
+    freePoint = id === "free";
+    store.set("reiatsu.freePoint", freePoint ? "1" : "");
+    here = freePoint || !surveyState ? null : [surveyState.next.x, surveyState.next.y];
+    drawSurvey(); renderPanel();
+  }
   else if (act === "cancel-capture") { api("api/survey/cancel", { method: "POST" }); stopCapture(); }
   else if (act === "del-point") { api(`api/survey/${encodeURIComponent(splitKey(sel)[1])}`, { method: "DELETE" }).then(() => { sel = null; loadSurvey(); }); }
   else if (act === "calibrate") {
@@ -730,7 +742,10 @@ $("#panel").addEventListener("change", async (e) => {
   else if (act === "rx-z") { plan.receivers.find((r) => r.id === splitKey(sel)[1]).z = +t.value; changed({ rooms: false }); }
   else if (act === "rx-p0") {
     const r = plan.receivers.find((r) => r.id === splitKey(sel)[1]);
-    if (t.value === "") delete r.p0; else r.p0 = +t.value;
+    let v = t.value === "" ? null : +t.value;
+    if (v > 0) { v = -v; flash(`P0 is negative: stored ${v} dBm`); }  // "70" meant −70
+    if (v !== null && !(v >= -100 && v <= -20)) { flash("P0 must be between −100 and −20 dBm", true); renderPanel(); return; }
+    if (v === null) delete r.p0; else r.p0 = v;
     changed({ rooms: false });
   }
   else if (act === "bg-x" || act === "bg-y") { plan.background[act.slice(3)] = +t.value; drawBackground(); changed({ rooms: false }); }
@@ -779,7 +794,7 @@ map.on("pm:create", (e) => {
 map.on("click", (e) => {
   const p = xy(e.latlng);
   if (mode === "devices" && sel) place(sel, p);
-  else if (mode === "survey" && !(capture && !capture.done)) { here = p; drawSurvey(); }
+  else if (mode === "survey" && !(capture && !capture.done)) { here = p; drawSurvey(); renderPanel(); }
   else if (mode === "background" && scalePts) {
     scalePts.push(p);
     L.circleMarker(e.latlng, { radius: 4, pmIgnore: true }).addTo(layers.tool);
@@ -844,7 +859,7 @@ async function loadSurvey() {
   try {
     surveyState = await api("api/survey");
     surveyError = null;
-    here = [surveyState.next.x, surveyState.next.y];
+    here = freePoint ? null : [surveyState.next.x, surveyState.next.y];
   } catch (err) { surveyError = err.message; }
   if (mode === "survey") { drawSurvey(); renderPanel(); }
 }
@@ -858,7 +873,7 @@ function drawSurvey() {
     m.addTo(layers.survey);
   }
   const t = surveyState.next;
-  L.marker(ll(t.x, t.y), { icon: L.divIcon({ className: "ring", html: "<div></div>" }), interactive: false, pmIgnore: true }).addTo(layers.survey);
+  if (!freePoint) L.marker(ll(t.x, t.y), { icon: L.divIcon({ className: "ring", html: "<div></div>" }), interactive: false, pmIgnore: true }).addTo(layers.survey);
   if (here) {
     const m = L.marker(ll(...here), { icon: L.divIcon({ className: "pin here" }), draggable: !(capture && !capture.done), pmIgnore: true });
     m.on("dragend", () => { here = xy(m.getLatLng()); });

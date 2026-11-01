@@ -34,6 +34,9 @@ class Door:
     width: float
 
 
+P0_RANGE = (-100.0, -20.0)  # plausible dBm at 1 m
+
+
 @dataclass
 class Receiver:
     id: str
@@ -189,6 +192,8 @@ def load_plan(src: str | Path | dict) -> Plan:
         if room not in rooms:
             raise ValueError(f"receiver {r['id']}: unknown room {room!r}")
         p0 = r.get("p0")
+        if p0 is not None and not P0_RANGE[0] <= float(p0) <= P0_RANGE[1]:
+            raise ValueError(f"receiver {r['id']}: p0 {p0} dBm is outside {P0_RANGE[0]}..{P0_RANGE[1]} (it is negative, e.g. -59)")
         receivers.append(Receiver(str(r["id"]), xy, float(r.get("z", 1.0)), room, None if p0 is None else float(p0)))
     zones = {name: _polygon(v) for name, v in (cfg.get("zones") or {}).items()}
     refs = {str(r["device"]): np.array([r["x"], r["y"]], float) for r in cfg.get("references") or []}

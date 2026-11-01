@@ -281,6 +281,7 @@ starts empty and you draw the plan in the UI.
   during the 30 s while the panel shows per-receiver advert counts and medians. Points
   are coloured by how well the current model fits them. Progress shows the
   leave-one-out room accuracy, with a "good enough" hint once it stops improving.
+  *Measure anywhere* skips the targets: tap where you stand and press Start.
 * **Calibrate** (in Survey): fits receiver power, path-loss exponent and wall losses to
   the survey points and the reference devices' last 10 minutes of adverts. Each extra
   device gets its own transmit offset. It shows now vs fitted (leave-one-out); *Apply*
