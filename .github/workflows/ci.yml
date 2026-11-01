@@ -36,4 +36,4 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          ignore: brands
+          ignore: brands description topics  # repo metadata, only needed for the HACS default store
