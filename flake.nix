@@ -46,6 +46,49 @@
             ))
           ];
         };
+        # docs site: nix develop .#docs -c sphinx-build -W docs docs/_build
+        docs = pkgs.mkShell {
+          packages = [
+            (pkgs.python3.withPackages (
+              p:
+              let
+                # not in nixpkgs: shibuya theme and its pygments-styles dependency, from PyPI wheels
+                wheel =
+                  pname: version: hash: deps:
+                  p.buildPythonPackage {
+                    inherit pname version;
+                    format = "wheel";
+                    src = pkgs.fetchPypi {
+                      inherit pname version hash;
+                      format = "wheel";
+                      dist = "py3";
+                      python = "py3";
+                    };
+                    dependencies = deps;
+                  };
+                pygments-styles = wheel "pygments_styles" "0.3.0" "sha256-xsRemTnrdZA0W8kIQRO6xGxF8SsAnRNCK+AugOhKA0w=" [
+                  p.pygments
+                ];
+                shibuya = wheel "shibuya" "2026.7.12" "sha256-CiwMEJ58xH/GULAf62cdJnwP/i45yY81KeMtcjqcnZs=" [
+                  p.sphinx
+                  pygments-styles
+                ];
+              in
+              with p;
+              [
+                numpy
+                scipy
+                pyyaml
+                paho-mqtt
+                sphinx
+                shibuya
+                myst-parser
+                sphinx-copybutton
+                sphinxcontrib-mermaid
+              ]
+            ))
+          ];
+        };
         default = pkgs.mkShell {
           packages = [
             (pkgs.python3.withPackages (

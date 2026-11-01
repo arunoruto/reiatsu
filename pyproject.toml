@@ -16,6 +16,7 @@ reiatsu = "reiatsu.daemon:main"
 
 [project.optional-dependencies]
 test = ["pytest"]
+docs = ["sphinx==9.1.0", "shibuya==2026.7.12", "myst-parser==5.1.0", "sphinx-copybutton==0.5.2", "sphinxcontrib-mermaid==2.1.1"]
 
 [tool.setuptools]
 packages = ["reiatsu"]

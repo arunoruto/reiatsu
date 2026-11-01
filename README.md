@@ -1,6 +1,7 @@
 <a id="readme-top"></a>
 
 [![CI][ci-shield]][ci-url]
+[![Docs][docs-shield]][docs-url]
 [![Docker][docker-shield]][docker-url]
 [![GHCR][ghcr-shield]][ghcr-url]
 [![Issues][issues-shield]][issues-url]
@@ -27,6 +28,9 @@
 > real data. Calibration happens in the web UI's survey; until you've run one, the
 > daemon uses the channel priors (plus per-receiver P0 overrides).
 > Anything marked *planned* below doesn't exist yet.
+
+📖 **Documentation** (install guide, survey walkthrough, and the theory with all the
+equations): <https://arunoruto.github.io/reiatsu/>
 
 <details>
   <summary>Table of Contents</summary>
@@ -515,3 +519,5 @@ Distributed under the MIT License. See [`LICENSE`](LICENSE) for more information
 [Nix-url]: https://nixos.org/
 [Docker-shield]: https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white
 [Docker-url]: https://www.docker.com/
+[docs-shield]: https://img.shields.io/github/actions/workflow/status/arunoruto/reiatsu/docs.yml?branch=main&style=for-the-badge&label=docs
+[docs-url]: https://arunoruto.github.io/reiatsu/

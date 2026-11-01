@@ -4,6 +4,8 @@ Reiatsu locates phones (and other BLE devices) room by room from the adverts you
 Bluetooth proxies hear. This add-on runs the Reiatsu daemon and its web UI (plan editor
 and live map), which opens from the sidebar through ingress.
 
+Full documentation, including the theory: <https://arunoruto.github.io/reiatsu/>
+
 ## Setup
 
 1. Install the MQTT broker (Mosquitto add-on) and the MQTT integration. The add-on gets

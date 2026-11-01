@@ -208,7 +208,7 @@ def leave_one_out(plan: Plan, grid: Grid, points: list[SurveyPoint]) -> dict:
 
 
 def residuals(plan: Plan, cal: Calibration, points: list[SurveyPoint]) -> list[float | None]:
-    """Mean |measured − model| per point, over the receivers that heard it."""
+    """Mean absolute difference measured − model per point, over the receivers that heard it."""
     out = []
     for p in points:
         mu = cal.predict(plan, p.xy[None])[:, 0] + cal.offsets.get(p.device, 0.0)
