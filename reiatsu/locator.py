@@ -25,6 +25,12 @@ class Occupancy:
     occupied: bool
 
 
+@dataclass(frozen=True)
+class Receivers:
+    ts: float
+    ids: tuple[str, ...]  # receivers currently online
+
+
 class Locator:
     """One tracker per device. Call :meth:`tick` about once per second."""
 
@@ -32,6 +38,7 @@ class Locator:
         self.new_tracker = new_tracker
         self.trackers: dict[str, Tracker] = {}
         self.occupancy: dict[str, bool] = {}
+        self.listening: set[str] | None = None  # None: assume every receiver in the plan is online
         self._buf: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
     def advert(self, a: Advert):
@@ -42,6 +49,11 @@ class Locator:
         for t in self.trackers.values():
             t.set_occupancy(o.area, o.occupied)
 
+    def set_receivers(self, r: Receivers):
+        self.listening = set(r.ids)
+        for t in self.trackers.values():
+            t.set_listening(self.listening)
+
     def tick(self, ts: float) -> list[Estimate]:
         out = []
         for dev in sorted(set(self._buf) | set(self.trackers)):
@@ -49,6 +61,8 @@ class Locator:
                 self.trackers[dev] = t = self.new_tracker()
                 for area, occ in self.occupancy.items():
                     t.set_occupancy(area, occ)
+                if self.listening is not None:
+                    t.set_listening(self.listening)
             readings = {rx: median(v) for rx, v in self._buf.pop(dev, {}).items()}
             out.append(replace(self.trackers[dev].step(ts, readings), device_id=dev))
         return out

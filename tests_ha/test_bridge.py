@@ -79,6 +79,9 @@ async def test_irk_device_every_scanner_and_rotation(hass, enable_bluetooth, mqt
     assert [x["rssi"] for x in published(mqtt_mock, "reiatsu/adverts")[-1]] == [-58]
     assert len(entry.runtime_data.following) == 1
 
+    online = published(mqtt_mock, "reiatsu/receivers")
+    assert len(online) == 1 and {"living_room", "aa_00_00_00_00_02"} <= set(online[0]["receivers"])
+
     # nothing new: nothing published
     n = mqtt_mock.async_publish.call_count
     await flush(hass, entry)

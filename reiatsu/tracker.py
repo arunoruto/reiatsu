@@ -66,6 +66,9 @@ class Tracker:
     offsets: np.ndarray = field(default_factory=lambda: np.arange(-12.0, 12.1, 2.0))  # dB, this device vs the calibration phone
     offset_sd: float = 6.0  # prior on the device's tx offset
     offset_forget: float = 1e-3  # per heard step, lets the offset estimate move again
+    # Per heard step, old evidence decays: readings of a device that doesn't move repeat the
+    # same shadowing/map error, so they saturate instead of piling up into false certainty.
+    evidence_forget: float = 0.1
 
     def __post_init__(self):
         if self.kernel is None:
@@ -79,6 +82,11 @@ class Tracker:
         self.offset_w = np.exp(-0.5 * (self.offsets / self.offset_sd) ** 2)
         self.offset_w /= self.offset_w.sum()
         self._occ_factor = np.ones(len(self.grid.xy))
+        self._listening = np.ones(len(self.receivers), bool)
+
+    def set_listening(self, receivers: set[str]):
+        """Receivers currently online: only those count as "not heard" when silent."""
+        self._listening = np.array([r in receivers for r in self.receivers])
 
     def set_occupancy(self, area: str, occupied: bool):
         self.occupancy[area] = occupied
@@ -111,8 +119,10 @@ class Tracker:
                 y[self.rx_index[rx]] = rssi
         if not np.isnan(y).all():
             # joint posterior over (cell, tx offset), offset kept as a small discrete set
-            ll = np.array([self.likelihood(self.mu + o, y) for o in self.offsets])  # (K, C)
-            joint = np.exp(ll - ll.max()) * self.belief * self.offset_w[:, None]
+            use = ~np.isnan(y) | self._listening
+            ll = np.array([self.likelihood(self.mu[use] + o, y[use]) for o in self.offsets])  # (K, C)
+            prior = self.belief ** (1 - self.evidence_forget)
+            joint = np.exp(ll - ll.max()) * prior * self.offset_w[:, None]
             w = joint.sum(1)
             self.offset_w = (1 - self.offset_forget) * w / w.sum() + self.offset_forget / len(w)
             self.belief = joint.sum(0) / joint.sum()

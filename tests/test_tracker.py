@@ -96,3 +96,18 @@ def test_learns_device_tx_offset(world):
         est = t.step(s, readings)
     assert est.room == "Bedroom"
     assert t.offset == pytest.approx(8, abs=2)
+
+
+def test_single_weak_receiver_stays_uncertain(world):
+    # a static device (a door lock) heard only by the living room receiver at -87 dBm, every
+    # second for 10 min: the repeats carry the same error, so the room must stay ambiguous
+    plan, grid, mu, kernel = world
+    ids = [r.id for r in plan.receivers]
+    alone = Tracker(grid, mu[[ids.index("living_room")]], ["living_room"], kernel)
+    offline = tracker(world)
+    offline.set_listening({"living_room"})  # the other five are offline: their silence means nothing
+    for t in (alone, offline):
+        for ts in range(1, 601):
+            est = t.step(ts, {"living_room": -87.0})
+        assert max(est.room_probs.values()) < 0.75, est.room_probs
+    assert offline.belief == pytest.approx(alone.belief)

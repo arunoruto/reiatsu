@@ -2,7 +2,7 @@
 
 from .calibrate import Calibration, NodeLink, SurveyPoint, WeakLabel, fit, next_point, starter_points, summarize
 from .channel import ChannelParams, Likelihood, predict
-from .locator import Advert, Locator, Occupancy
+from .locator import Advert, Locator, Occupancy, Receivers
 from .plan import Grid, Plan, load_plan, make_grid
 from .tracker import Estimate, Tracker, motion_kernel
 
@@ -17,6 +17,7 @@ __all__ = [
     "NodeLink",
     "Occupancy",
     "Plan",
+    "Receivers",
     "SurveyPoint",
     "Tracker",
     "WeakLabel",

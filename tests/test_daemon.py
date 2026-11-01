@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from reiatsu.daemon import Publisher, build_locator, parse, read_log, to_line, track
-from reiatsu.locator import Advert, Occupancy
+from reiatsu.locator import Advert, Occupancy, Receivers
 from reiatsu.plan import load_plan, make_grid
 from sim import world
 from sim.run import replay
@@ -18,6 +18,9 @@ def test_parse_topics():
     assert parse("reiatsu/adverts", b'{"ts": 2, "receiver_id": "k", "device_id": "p", "rssi": -1}', "reiatsu")[0].ts == 2
     occ = parse("reiatsu/occupancy/living_room", b'{"ts": 3, "area": "Living Room", "occupied": true}', "reiatsu")
     assert occ == [Occupancy(3.0, "Living Room", True)]
+    rx = parse("reiatsu/receivers", b'{"ts": 4, "receivers": ["a", "b"]}', "reiatsu")
+    assert rx == [Receivers(4.0, ("a", "b"))]
+    assert list(read_log([to_line(rx[0])])) == rx
     assert parse("other/adverts", b"[]", "reiatsu") == []
 
 

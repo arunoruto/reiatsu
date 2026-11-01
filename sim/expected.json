@@ -1,12 +1,12 @@
 {
   "default": {
     "baseline: nearest receiver (Bermuda-like)": 0.568,
-    "priors only": 0.604,
-    "node-to-node only": 0.655,
-    "survey: starter": 0.692,
-    "survey: +10 active": 0.684,
-    "survey: +10 random": 0.691,
-    "survey: +10 active, no walls": 0.678,
-    "survey: +10 active + mmWave": 0.77
+    "priors only": 0.614,
+    "node-to-node only": 0.651,
+    "survey: starter": 0.678,
+    "survey: +10 active": 0.674,
+    "survey: +10 random": 0.682,
+    "survey: +10 active, no walls": 0.667,
+    "survey: +10 active + mmWave": 0.778
   }
 }

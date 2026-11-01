@@ -223,6 +223,7 @@ environment, not the command line. Topics, with the default prefix `reiatsu`:
 |---|---|---|
 | `reiatsu/adverts` | in | `{ts, receiver_id, device_id, rssi}` or a list of them |
 | `reiatsu/occupancy/<area>` | in (retained) | `{ts, area, occupied}` |
+| `reiatsu/receivers` | in (retained) | `{ts, receivers: [ids online]}`: only these count as "not heard" when silent; until it arrives, all plan receivers do |
 | `reiatsu/<device_id>/state` | out | `{ts, room, x, y, sigma, room_probs}` |
 | `reiatsu/status` | out (retained) | `online` / `offline` (last will) |
 | `homeassistant/sensor/reiatsu_<device_id>/<room\|x\|y\|sigma>/config` | out (retained) | MQTT discovery |
@@ -266,13 +267,13 @@ error against the hidden truth.
 | config | room acc | acc awake | acc locked | time to correct room (s) | false flips/h | pos err (m) | RSSI map err (dB) |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | baseline: nearest receiver (Bermuda-like) | 56.8% ± 7.9 | 70.4% ± 5.7 | 51.7% ± 9.0 | 34 ± 6 | 19.8 ± 4.6 | 2.65 ± 0.44 | – |
-| priors only | 60.4% ± 9.2 | 70.7% ± 13.4 | 55.7% ± 9.1 | 36 ± 12 | 12.1 ± 2.9 | 1.41 ± 0.15 | 7.2 ± 1.0 |
-| node-to-node only | 65.5% ± 2.9 | 80.1% ± 3.6 | 59.9% ± 4.9 | 33 ± 9 | 11.1 ± 3.0 | 1.25 ± 0.08 | 7.2 ± 1.5 |
-| survey: starter | 69.2% ± 6.5 | 80.5% ± 8.9 | 64.4% ± 8.6 | 25 ± 9 | 9.7 ± 2.7 | 1.17 ± 0.12 | 1.8 ± 0.3 |
-| survey: +10 active | 68.4% ± 4.5 | 81.2% ± 9.9 | 63.2% ± 4.9 | 26 ± 10 | 8.3 ± 1.8 | 1.18 ± 0.12 | 1.6 ± 0.3 |
-| survey: +10 random | 69.1% ± 4.3 | 81.3% ± 8.5 | 64.1% ± 5.2 | 25 ± 9 | 9.6 ± 2.7 | 1.19 ± 0.12 | 1.6 ± 0.3 |
-| survey: +10 active, no walls | 67.8% ± 5.5 | 79.6% ± 4.8 | 62.9% ± 8.3 | 29 ± 13 | 8.3 ± 3.2 | 1.27 ± 0.11 | 4.4 ± 1.0 |
-| survey: +10 active + mmWave | 77.0% ± 2.6 | 85.2% ± 8.2 | 73.7% ± 1.9 | 19 ± 7 | 12.7 ± 1.7 | 1.10 ± 0.10 | 1.6 ± 0.3 |
+| priors only | 61.4% ± 8.9 | 70.6% ± 12.3 | 57.4% ± 8.4 | 34 ± 12 | 14.4 ± 4.2 | 1.42 ± 0.19 | 7.2 ± 1.0 |
+| node-to-node only | 65.1% ± 2.4 | 78.5% ± 4.6 | 59.8% ± 4.3 | 30 ± 9 | 13.5 ± 2.7 | 1.26 ± 0.08 | 7.2 ± 1.5 |
+| survey: starter | 67.8% ± 6.5 | 80.2% ± 8.0 | 62.6% ± 8.5 | 25 ± 12 | 10.8 ± 3.3 | 1.20 ± 0.13 | 1.8 ± 0.3 |
+| survey: +10 active | 67.4% ± 3.8 | 79.5% ± 8.7 | 62.5% ± 4.3 | 26 ± 10 | 12.2 ± 3.1 | 1.20 ± 0.13 | 1.6 ± 0.3 |
+| survey: +10 random | 68.2% ± 5.2 | 80.6% ± 7.5 | 63.2% ± 7.3 | 25 ± 9 | 10.9 ± 2.6 | 1.20 ± 0.11 | 1.6 ± 0.3 |
+| survey: +10 active, no walls | 66.7% ± 5.7 | 79.9% ± 3.5 | 61.5% ± 8.2 | 31 ± 11 | 10.6 ± 4.3 | 1.31 ± 0.12 | 4.4 ± 1.0 |
+| survey: +10 active + mmWave | 77.8% ± 3.2 | 85.1% ± 8.2 | 74.8% ± 1.9 | 17 ± 6 | 13.6 ± 1.9 | 1.09 ± 0.10 | 1.6 ± 0.3 |
 
 *`--scenario default`, seeds 1–5, mean ± sd.* What the numbers say so far:
 
@@ -290,8 +291,13 @@ error against the hidden truth.
 * An occupied sensor only mildly pulls the phone into its room (`mmwave_p_other =
   0.5`, since another resident may have triggered it), and the reported room
   switches only on a 0.3 probability lead. Together these cut false flips with
-  mmWave from 17 to 13 per hour at the same accuracy. Letting only "empty" reports
+  mmWave from 17 to about 13 per hour at the same accuracy. Letting only "empty" reports
   count (no pull at all) cut flips further but cost about 5 points.
+* Old RSSI evidence decays (`evidence_forget = 0.1` per heard step). A device that
+  doesn't move repeats the same shadowing and map error every second, and without
+  this a single weak receiver drove one room to 100% within a minute. It now stays
+  below ~70%. The simulator's fading is independent per advert, so it can't reward
+  this, and it costs about a point there.
 
 ### Floor plan
 

@@ -7,6 +7,7 @@ Input topics (published by the reiatsu_bridge HA integration, or anything else):
 
 - ``<prefix>/adverts``: one {ts, receiver_id, device_id, rssi} object or a list of them
 - ``<prefix>/occupancy/<area>``: {ts, area, occupied}
+- ``<prefix>/receivers``: {ts, receivers: [ids online]}; until it arrives, all plan receivers count as online
 
 Output: ``<prefix>/<device_id>/state`` = {ts, room, x, y, sigma, room_probs}, plus
 ``<prefix>/status`` online/offline.
@@ -26,12 +27,13 @@ from dataclasses import asdict
 from typing import Callable, Iterable, Iterator
 
 from .channel import ChannelParams, predict
-from .locator import Advert, Locator, Occupancy
+from .locator import Advert, Locator, Occupancy, Receivers
 from .plan import load_plan, make_grid
 from .tracker import Estimate, Tracker, motion_kernel
 
 log = logging.getLogger("reiatsu")
-type Event = Advert | Occupancy
+type Event = Advert | Occupancy | Receivers
+KINDS = {"advert": Advert, "occupancy": Occupancy, "receivers": Receivers}
 
 
 def parse(topic: str, payload: bytes, prefix: str) -> list[Event]:
@@ -41,18 +43,24 @@ def parse(topic: str, payload: bytes, prefix: str) -> list[Event]:
         return [Advert(float(a["ts"]), str(a["receiver_id"]), str(a["device_id"]), float(a["rssi"])) for a in items]
     if topic.startswith(f"{prefix}/occupancy/"):
         return [Occupancy(float(data["ts"]), str(data["area"]), bool(data["occupied"]))]
+    if topic == f"{prefix}/receivers":
+        return [Receivers(float(data["ts"]), tuple(map(str, data["receivers"])))]
     return []
 
 
 def to_line(ev: Event) -> str:
-    return json.dumps({"type": "advert" if isinstance(ev, Advert) else "occupancy"} | asdict(ev))
+    kind = next(k for k, cls in KINDS.items() if isinstance(ev, cls))
+    return json.dumps({"type": kind} | asdict(ev))
 
 
 def read_log(lines: Iterable[str]) -> Iterator[Event]:
     for line in lines:
         if line.strip():
             d = json.loads(line)
-            yield (Advert if d.pop("type") == "advert" else Occupancy)(**d)
+            cls = KINDS[d.pop("type")]
+            if cls is Receivers:
+                d["ids"] = tuple(d["ids"])
+            yield cls(**d)
 
 
 def track(events: Iterable[tuple[float, Event | None]], locator: Locator, emit: Callable[[list[Estimate]], None]):
@@ -68,6 +76,8 @@ def track(events: Iterable[tuple[float, Event | None]], locator: Locator, emit: 
             locator.advert(ev)
         elif isinstance(ev, Occupancy):
             locator.set_occupancy(ev)
+        elif isinstance(ev, Receivers):
+            locator.set_receivers(ev)
 
 
 def build_locator(plan_path: str) -> tuple[Locator, set[str]]:
@@ -137,7 +147,7 @@ def live(args, locator: Locator, receivers: set[str]):
 
     def on_connect(c, _userdata, _flags, reason, _props):
         log.info("MQTT connected (%s)", reason)
-        c.subscribe([(f"{args.prefix}/adverts", 0), (f"{args.prefix}/occupancy/+", 0)])
+        c.subscribe([(f"{args.prefix}/adverts", 0), (f"{args.prefix}/occupancy/+", 0), (f"{args.prefix}/receivers", 0)])
         c.publish(status, "online", retain=True)
 
     client.on_connect = on_connect

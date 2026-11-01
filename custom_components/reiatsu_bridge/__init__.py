@@ -7,6 +7,7 @@ and publishes them for the Reiatsu daemon:
 - ``<prefix>/adverts``: JSON list of {ts, receiver_id, device_id, rssi},
   flushed every ``poll_interval`` seconds
 - ``<prefix>/occupancy/<area>``: retained {ts, area, occupied}
+- ``<prefix>/receivers``: retained {ts, receivers}, the receiver ids currently online
 
 IRKs never leave the config entry: devices are published by the slug of their
 friendly name.
@@ -33,6 +34,7 @@ from homeassistant.util import slugify
 from .const import CONF_DEVICES, CONF_INTERVAL, CONF_MMWAVE, CONF_PREFIX, CONF_RECEIVERS
 
 MAX_UNKNOWN = 50_000  # addresses that resolved to no IRK; cleared when full
+SCANNER_TIMEOUT = 60  # s without hearing anything at all: the scanner is offline
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -62,6 +64,7 @@ class Bridge:
         self.unknown: set[str] = set()
         self.buffer: list[dict] = []
         self.areas: dict[str, bool] = {}
+        self.online: list[str] | None = None
         self.unsubs: list = []
 
     def start(self) -> None:
@@ -120,6 +123,13 @@ class Bridge:
         return self.receivers[source]
 
     async def _flush(self, _now) -> None:
+        online = sorted(
+            {self._receiver(s.source) for s in bluetooth.async_current_scanners(self.hass) if s.time_since_last_detection() < SCANNER_TIMEOUT}
+        )
+        if online != self.online:
+            self.online = online
+            payload = json.dumps({"ts": round(time.time(), 3), "receivers": online})
+            await mqtt.async_publish(self.hass, f"{self.prefix}/receivers", payload, retain=True)
         if self.buffer:
             batch, self.buffer = self.buffer, []
             await mqtt.async_publish(self.hass, f"{self.prefix}/adverts", json.dumps(batch))
