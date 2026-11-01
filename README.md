@@ -177,7 +177,7 @@ pip install -e '.[test]'
 **Docker**
 
 Images for `linux/amd64` and `linux/arm64` are published to
-`ghcr.io/arunoruto/reiatsu`: `:edge` follows `main`, and a tag `vX.Y.Z` publishes
+`ghcr.io/arunoruto/reiatsu`: `:edge` follows `main`, and a GitHub release `vX.Y.Z` publishes
 `:X.Y.Z`, `:X.Y` and `:latest`. The image runs the daemon, with the floor plan at
 `/config/plan.yaml`:
 
