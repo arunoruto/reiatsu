@@ -26,11 +26,13 @@ import queue
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 from .channel import ChannelParams, predict
 from .locator import Advert, Locator, Occupancy, Receivers
 from .plan import load_plan, make_grid
+from .survey import load_calibration
 from .tracker import Estimate, Tracker, motion_kernel
 
 log = logging.getLogger("reiatsu")
@@ -82,14 +84,19 @@ def track(events: Iterable[tuple[float, Event | None]], locator: Locator, emit: 
             locator.set_receivers(ev)
 
 
-def tracker_factory(src: str | dict) -> tuple[Callable[[], Tracker] | None, set[str]]:
-    """Plan (path or dict) -> tracker factory and receiver ids; None while the plan has no rooms."""
+def tracker_factory(src: str | dict, folder: Path | None = None) -> tuple[Callable[[], Tracker] | None, set[str]]:
+    """Plan (path or dict) -> tracker factory and receiver ids; None while the plan has no rooms.
+
+    Uses calibration.json from ``folder`` (default: the plan's folder) if there is one,
+    else the channel priors with any per-receiver p0 overrides.
+    """
     plan = load_plan(src)
     if not plan.rooms:
         return None, set()
     grid = make_grid(plan)
-    # ponytail: channel priors (plus per-receiver p0 overrides); load fitted ChannelParams once there is a calibration CLI
-    mu = predict(plan, ChannelParams.prior(plan), grid.xy)
+    folder = folder or (Path(src).parent if not isinstance(src, dict) else None)
+    cal = load_calibration(folder, plan) if folder else None
+    mu = cal.predict(plan, grid.xy) if cal else predict(plan, ChannelParams.prior(plan), grid.xy)
     kernel, ids = motion_kernel(grid), [r.id for r in plan.receivers]
     return (lambda: Tracker(grid, mu, ids, kernel)), set(ids)
 
@@ -156,7 +163,8 @@ def live(args, locator: Locator, receivers: set[str]):
     if args.http_port:
         from .web import App, serve
 
-        app = App(args.plan, lambda raw: inbox.put((RELOAD, tracker_factory(raw))))
+        folder = Path(args.plan).parent
+        app = App(args.plan, lambda raw: inbox.put((RELOAD, tracker_factory(raw, folder))))
         serve(app, args.http_bind, args.http_port)
     rssi: dict[str, dict[str, tuple[float, float]]] = {}  # receiver -> device -> (rssi, ts)
     status = f"{args.prefix}/status"
@@ -202,6 +210,8 @@ def live(args, locator: Locator, receivers: set[str]):
                     record.write(to_line(ev) + "\n")
                 if isinstance(ev, Advert):
                     rssi.setdefault(ev.receiver_id, {})[ev.device_id] = (ev.rssi, ev.ts)
+                    if app:
+                        app.survey.on_advert(ev, time.time())
                 if isinstance(ev, Advert) and ev.receiver_id not in receivers and ev.receiver_id not in warned:
                     warned.add(ev.receiver_id)
                     log.warning("receiver %r is not in the floor plan; its adverts are ignored", ev.receiver_id)

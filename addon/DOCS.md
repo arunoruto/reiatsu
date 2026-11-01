@@ -23,6 +23,8 @@ Everything lives in the add-on config folder, `/addon_configs/<id>_reiatsu/` on 
 
 - `plan.yaml`: the floor plan; the UI writes it and keeps `plan.yaml.bak`
 - `background.png` / `background.jpg`: the uploaded floor plan image
+- `survey.json`, `calibration.json`: survey points and the applied calibration
+  (from the UI's Survey tab)
 - `record.jsonl`: raw input, when **Record** is on; replay it with
   `reiatsu --plan plan.yaml --replay record.jsonl`
 

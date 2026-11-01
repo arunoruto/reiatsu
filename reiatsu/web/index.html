@@ -33,7 +33,11 @@ nav button.on { background: var(--accent); color: #fff; border-color: var(--acce
 main { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
 #map { background: var(--map); min-height: 0; }
 aside { overflow: auto; padding: 12px; border-left: 1px solid var(--line); background: var(--panel); }
+body[data-mode="live"] header button:disabled, body[data-mode="survey"] header button:disabled { display: none; }
 @media (max-width: 800px) {
+  header { padding: 6px 10px; }
+  nav { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; }
+  nav button { flex: none; }
   main { grid-template-columns: 1fr; grid-template-rows: 58vh auto; }
   aside { border-left: 0; border-top: 1px solid var(--line); }
 }
@@ -71,6 +75,25 @@ td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line
 .pin.ref { background: #9333ea; border-radius: 3px; }
 .pin.door { width: 14px !important; height: 14px !important; margin: -7px 0 0 -7px !important; border-radius: 3px; background: var(--ok); }
 .pin.sel { box-shadow: 0 0 0 3px var(--accent); }
+.pin.here { width: 26px !important; height: 26px !important; margin: -13px 0 0 -13px !important; background: var(--accent); }
+.ring { pointer-events: none; }
+.ring div { width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid var(--accent); border-radius: 50%; animation: pulse 1.6s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+.handle { cursor: grab; touch-action: none; user-select: none; padding: 2px 8px; color: var(--muted); font-size: 18px; }
+.ghost { position: fixed; z-index: 9999; pointer-events: none; transform: translate(-50%, -140%); background: var(--accent); color: #fff;
+  padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.count { font-size: 56px; font-weight: 700; text-align: center; line-height: 1.1; }
+.target { font-size: 18px; margin: 4px 0; }
+button.big { width: 100%; min-height: 52px; font-size: 18px; }
+#save:not(:disabled)::after { content: " •"; }
+.legend { background: var(--panel); color: var(--fg); padding: 4px 8px; border-radius: 6px; font-size: 12px; box-shadow: 0 1px 4px #0003; max-width: 220px; }
+.legend summary { cursor: pointer; font-weight: 600; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+@media (pointer: coarse) {
+  button, select, input { min-height: 44px; }
+  ul.list li { padding: 10px 6px; }
+  .pin { width: 24px !important; height: 24px !important; margin: -12px 0 0 -12px !important; }
+}
 .pin span { position: absolute; left: 20px; top: -2px; white-space: nowrap; font-size: 11px; font-weight: 600;
   color: var(--fg); text-shadow: 0 0 3px var(--map), 0 0 3px var(--map); }
 </style>
@@ -80,6 +103,8 @@ td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line
   <b>Reiatsu</b>
   <nav id="tabs"></nav>
   <span id="status"></span>
+  <button id="undo" disabled title="Undo (Ctrl+Z)">↶</button>
+  <button id="redo" disabled title="Redo (Ctrl+Shift+Z)">↷</button>
   <button id="revert" disabled>Revert</button>
   <button id="save" class="primary" disabled>Save</button>
 </header>
@@ -98,7 +123,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const $ = (s) => document.querySelector(s);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();  // SVG attributes can't use var()
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-const MODES = { live: "Live", rooms: "Rooms", walls: "Walls & doors", receivers: "Receivers", refs: "References", background: "Background" };
+const MODES = { live: "Live", survey: "Survey", devices: "Devices", rooms: "Rooms", walls: "Walls & doors", background: "Background" };
+const RES_COLOR = (r) => (r == null ? "#888" : r < 4 ? "#16a34a" : r < 8 ? "#eab308" : "#dc2626");  // survey residual, dB
 const MAT_COLOR = { drywall: "#9ca3af", brick: "#b45309", concrete: "#475569", glass: "#38bdf8" };
 
 let plan = {}, saved = "{}", derived = null, planError = null, materials = [];
@@ -106,12 +132,30 @@ let live = {}, device = null, showHeat = true;
 let mode = "live", sel = null, addingDoor = false, scalePts = null, editing = null;
 let bgSize = null;  // natural pixel size of the background image
 let dragging = false, lastOnline = "";
+let undoStack = [], redoStack = [], lastState = null;
+let surveyState = null, surveyError = null, capture = null, here = null, calPreview = null, captureTimer = null;
+const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+let surveyDevice = store.get("reiatsu.surveyDevice", ""), held = store.get("reiatsu.held", "hand");
 
 const map = L.map("map", { crs: L.CRS.Simple, minZoom: -3, maxZoom: 8, zoomSnap: 0.25, attributionControl: false });
 map.setView([0, 0], 4);
 map.pm.setGlobalOptions({ snappable: true, snapDistance: 14, allowSelfIntersection: false });
 const layers = {};
-for (const k of ["bg", "heat", "rooms", "walls", "doors", "rx", "refs", "est", "tool"]) layers[k] = L.layerGroup().addTo(map);
+for (const k of ["bg", "heat", "rooms", "walls", "doors", "rx", "refs", "survey", "est", "tool"]) layers[k] = L.layerGroup().addTo(map);
+
+const legend = L.control({ position: "bottomleft" });
+legend.onAdd = () => {
+  const d = L.DomUtil.create("div", "legend");
+  d.innerHTML = `<details><summary>Legend</summary>
+    <div><i style="background:var(--ok)"></i>receiver online · <i style="background:var(--danger)"></i>offline · <i style="background:var(--muted)"></i>unknown</div>
+    <div><i style="background:#9333ea;border-radius:2px"></i>reference device · <i style="background:var(--ok);border-radius:2px"></i>door</div>
+    <div>survey point fit: <i style="background:#16a34a"></i>&lt;4 dB <i style="background:#eab308"></i>&lt;8 <i style="background:#dc2626"></i>worse</div>
+    <div>walls: ${Object.entries(MAT_COLOR).map(([m, c]) => `<i style="background:${c};border-radius:0"></i>${m}`).join(" ")}</div>
+    <div><i style="background:var(--accent)"></i>estimate, circle = σ · orange = probability</div></details>`;
+  L.DomEvent.disableClickPropagation(d);
+  return d;
+};
+legend.addTo(map);
 
 async function api(path, opts = {}) {
   const r = await fetch(path, opts);
@@ -174,7 +218,11 @@ function orient(how) {
   mapPoints(plan, ([x, y]) => [r2(x - nx + x0), r2(y - ny + y0)]);
 }
 
+let flashUntil = 0;
+function flash(msg, err = false) { setStatus(msg, err); flashUntil = Date.now() + 4000; }
+
 function setStatus(msg, err = false) {
+  if (Date.now() < flashUntil) return;  // a message the user should get to read
   const s = $("#status");
   s.textContent = msg;
   s.className = err ? "err" : "";
@@ -195,8 +243,29 @@ function liveStatus() {
   return `Live · ${Object.keys(live.devices || {}).length} device(s) · ${age < 5 ? "now" : Math.round(age) + " s ago"}`;
 }
 
+function record() {
+  const now = JSON.stringify(plan);
+  if (lastState !== null && now !== lastState) {
+    undoStack.push(lastState);
+    if (undoStack.length > 100) undoStack.shift();
+    redoStack = [];
+  }
+  lastState = now;
+}
+
+function undoRedo(from, to) {
+  if (!from.length) return;
+  to.push(JSON.stringify(plan));
+  plan = JSON.parse(from.pop());
+  lastState = JSON.stringify(plan);
+  sel = null; loadBackground(); changed({ record: false });
+}
+
 let previewTimer = null;
-function changed({ rooms = true } = {}) {
+function changed({ rooms = true, record: rec = true } = {}) {
+  if (rec) record();
+  $("#undo").disabled = !undoStack.length;
+  $("#redo").disabled = !redoStack.length;
   clearTimeout(previewTimer);
   previewTimer = setTimeout(async () => {
     try {
@@ -367,15 +436,17 @@ function drawMarkers() {
   const online = live.online;
   plan.receivers.forEach((r) => {
     const st = online ? (online.includes(r.id) ? " on" : " off") : "";
-    pin(`rx${st}${mode === "receivers" && sel === r.id ? " sel" : ""}`, r.id, ll(r.x, r.y), mode === "receivers",
-      (p) => { [r.x, r.y] = p; delete r.room; sel = r.id; changed({ rooms: false }); },
-      () => { if (mode === "receivers") { sel = r.id; renderPanel(); drawMarkers(); } }).addTo(layers.rx);
+    const key = `rx:${r.id}`;
+    pin(`rx${st}${sel === key ? " sel" : ""}`, r.id, ll(r.x, r.y), mode === "devices",
+      (p) => { [r.x, r.y] = p; delete r.room; sel = key; changed({ rooms: false }); },
+      () => selectItem(key)).addTo(layers.rx);
   });
   layers.refs.clearLayers();
   plan.references.forEach((r) => {
-    pin(`ref${mode === "refs" && sel === r.device ? " sel" : ""}`, r.device, ll(r.x, r.y), mode === "refs",
-      (p) => { [r.x, r.y] = p; sel = r.device; changed({ rooms: false }); },
-      () => { if (mode === "refs") { sel = r.device; renderPanel(); drawMarkers(); } }).addTo(layers.refs);
+    const key = `dev:${r.device}`;
+    pin(`ref${sel === key ? " sel" : ""}`, r.device, ll(r.x, r.y), mode === "devices",
+      (p) => { [r.x, r.y] = p; sel = key; changed({ rooms: false }); },
+      () => selectItem(key)).addTo(layers.refs);
   });
 }
 
@@ -504,35 +575,73 @@ const PANELS = {
     }
     return h;
   },
-  receivers() {
-    let h = `<h3>Receivers</h3><p class="hint">Online scanners and ids seen in adverts. Select one, then tap the map to place it; drag to move.</p><ul class="list">`;
-    h += receiverIds().map((id) => {
-      const placed = plan.receivers.some((r) => r.id === id);
-      return `<li class="${id === sel ? "sel" : ""}" data-act="sel-rx" data-id="${esc(id)}"><span class="grow">${esc(id)}</span>${rxStatus(id)}${placed ? "" : ' <span class="badge">not placed</span>'}</li>`;
-    }).join("") || '<p class="hint">None seen yet.</p>';
-    h += `</ul><div class="row"><input placeholder="other id" data-act="new-rx-id"><button data-act="new-rx">Add</button></div>`;
-    const r = plan.receivers.find((r) => r.id === sel);
+  devices() {
+    const item = (kind, id, extra) => `<li class="${sel === `${kind}:${id}` ? "sel" : ""}" data-act="sel-item" data-id="${kind}:${esc(id)}">
+      <span class="handle" data-drag="${kind}:${esc(id)}" title="Drag onto the map">⠿</span><span class="grow">${esc(id)}</span>${extra}</li>`;
+    let h = `<p class="hint">Drag ⠿ onto the map, or select an item and tap the map. Drag markers to move them; tap a marker for its settings.</p>
+      <h3>Receivers</h3><ul class="list">`;
+    h += receiverIds().map((id) => item("rx", id, rxStatus(id) + (plan.receivers.some((r) => r.id === id) ? "" : ' <span class="badge">not placed</span>'))).join("") || '<p class="hint">None seen yet.</p>';
+    h += `</ul><div class="row"><input placeholder="other receiver id" data-act="new-rx-id"><button data-act="new-rx">Add</button></div>
+      <h3>Tracked devices</h3><p class="hint">Place one that never moves (a door lock) as a reference: ground truth for the live error and a calibration label.</p><ul class="list">`;
+    h += deviceIds().map((id) => item("dev", id, plan.references.some((r) => r.device === id) ? '<span class="badge on">reference</span>' : "")).join("") || '<p class="hint">No devices seen yet.</p>';
+    h += "</ul>";
+    const [kind, id] = splitKey(sel);
+    const r = kind === "rx" && plan.receivers.find((r) => r.id === id), ref = kind === "dev" && plan.references.find((r) => r.device === id);
     if (r) {
-      h += `<h3>${esc(r.id)}</h3>
-        <div class="row"><label>x / y</label>${r.x} / ${r.y} m · ${esc(derived?.receivers?.[r.id] || roomAt([r.x, r.y]) || "?")}</div>
+      h += `<h3>Receiver ${esc(r.id)}</h3>
+        <div class="row"><label>Position</label>${r.x} / ${r.y} m · ${esc(derived?.receivers?.[r.id] || roomAt([r.x, r.y]) || "?")}</div>
         <div class="row"><label>Height z</label><input type="number" step="0.1" data-act="rx-z" value="${r.z ?? 1}"> m</div>
         <div class="row"><label>P0</label><input type="number" step="1" data-act="rx-p0" value="${r.p0 ?? ""}" placeholder="prior"> dBm at 1 m</div>
-        <p class="hint">Leave P0 empty for the default (−59 dBm). Lower it for a receiver that hears badly, e.g. inside a cabinet.</p>
-        <div class="row"><button class="danger" data-act="del-rx">Remove from plan</button></div>`;
-    } else if (sel) h += `<p class="hint">Tap the map to place <b>${esc(sel)}</b>.</p>`;
+        <p class="hint">Leave P0 empty for the default (−59 dBm, or the calibrated value). Lower it for a receiver that hears badly, e.g. inside a cabinet.</p>
+        <div class="row"><button class="danger" data-act="del-item">Remove from plan</button></div>`;
+    } else if (ref) {
+      h += `<h3>Reference ${esc(ref.device)}</h3><div class="row"><label>Position</label>${ref.x} / ${ref.y} m · ${esc(roomAt([ref.x, ref.y]) || "?")}</div>
+        <div class="row"><button class="danger" data-act="del-item">Not a reference</button></div>`;
+    } else if (sel) h += `<p class="hint">Tap the map to place <b>${esc(id)}</b>.</p>`;
     return h;
   },
-  refs() {
-    let h = `<h3>Reference devices</h3><p class="hint">A tracked device that stays at a known spot (e.g. a door lock). Its live error shows on the Live tab; later it becomes a calibration label. Select, then tap the map.</p><ul class="list">`;
-    h += deviceIds().map((id) => {
-      const placed = plan.references.some((r) => r.device === id);
-      return `<li class="${id === sel ? "sel" : ""}" data-act="sel-ref" data-id="${esc(id)}"><span class="grow">${esc(id)}</span>${placed ? '<span class="badge on">placed</span>' : ""}</li>`;
-    }).join("") || '<p class="hint">No devices seen yet.</p>';
-    h += "</ul>";
-    const r = plan.references.find((r) => r.device === sel);
-    if (r) h += `<div class="row"><label>x / y</label>${r.x} / ${r.y} m · ${esc(roomAt([r.x, r.y]) || "?")}</div>
-      <div class="row"><button class="danger" data-act="del-ref">Remove</button></div>`;
-    else if (sel) h += `<p class="hint">Tap the map to place <b>${esc(sel)}</b>.</p>`;
+  survey() {
+    if (dirty()) return '<p class="hint">Save the plan first: the survey uses the saved plan.</p>';
+    if (surveyError) return `<p class="hint">${esc(surveyError)}</p>`;
+    if (!surveyState) return '<p class="hint">Loading…</p>';
+    const s = surveyState, c = capture;
+    if (c && !c.done) {
+      const rows = Object.entries(c.receivers).map(([rx, v]) => `<tr><td>${esc(rx)}</td><td>${v.n}</td><td>${v.median == null ? "–" : v.median.toFixed(0) + " dBm"}</td></tr>`).join("");
+      return `<div class="count">${Math.max(0, Math.ceil(c.remaining))} s</div>
+        <p style="text-align:center">Turn slowly once, holding <b>${esc(c.device)}</b> the way you normally do.</p>
+        <table><tr><th>receiver</th><th>adverts</th><th>median</th></tr>${rows}</table>
+        ${c.silent.length ? `<p class="hint">Not heard yet: ${c.silent.map(esc).join(", ")}</p>` : ""}
+        <div class="row"><button class="danger big" data-act="cancel-capture">Cancel</button></div>`;
+    }
+    const devs = deviceIds();
+    if (!surveyDevice && devs.length) surveyDevice = devs[0];
+    const t = s.next, loo = s.loo;
+    let h = `<div class="target">Go to <b>${esc(t.room)}</b>: ${esc(t.hint)}</div>
+      <p class="hint">Point ${t.done + 1} of ~${t.total}${t.phase === "active" ? " · extra points where the map is least certain" : ""}. Stand on the pulsing target, or drag the blue marker (or tap the map) to where you really are.</p>
+      <div class="row"><label>Device</label><select data-act="survey-device">${devs.map((d) => `<option ${d === surveyDevice ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+      <div class="row"><label>Held</label><select data-act="held">${["hand", "pocket"].map((v) => `<option ${v === held ? "selected" : ""}>${v}</option>`).join("")}</select>
+        <label style="min-width:0">for</label><input type="number" min="10" max="120" step="5" data-act="seconds" value="${store.get("reiatsu.seconds", 30)}"> s</div>
+      <div class="row"><button class="primary big" data-act="start-capture" ${devs.length ? "" : "disabled"}>Start</button></div>
+      <h3>Progress</h3><p>${s.points.length} point(s) · room accuracy ${loo.room_acc == null ? "–" : (loo.room_acc * 100).toFixed(0) + "%"}${loo.err_m == null ? "" : ` · median error ${loo.err_m.toFixed(1)} m`}</p>
+      <p class="hint">Accuracy is leave-one-out: each point located with a calibration fitted on all the others.</p>`;
+    if (s.plateau) h += `<p><b>Good enough:</b> accuracy has stopped improving. Calibrate and stop, or add points where it still guesses wrong.</p>`;
+    const [kind, id] = splitKey(sel);
+    const pt = kind === "pt" && s.points.find((p) => p.id === id);
+    if (pt) h += `<h3>Point</h3><p>${esc(pt.device)} (${esc(pt.held)}) at ${pt.x} / ${pt.y} · heard by ${pt.heard} · fit ${pt.residual == null ? "–" : pt.residual + " dB"}</p>
+      <div class="row"><button class="danger" data-act="del-point">Delete point</button></div>`;
+    h += `<h3>Calibrate</h3><div class="row"><button data-act="calibrate" ${s.points.length < 3 ? "disabled" : ""}>Fit${s.calibrated ? " again" : ""}…</button>${s.calibrated ? '<span class="badge on">calibrated</span>' : ""}</div>
+      <p class="hint">Fits receiver power, path loss and wall losses to the survey points and reference devices.</p>`;
+    if (calPreview) {
+      const f = (v, pct) => (v == null ? "–" : pct ? (v * 100).toFixed(0) + "%" : v.toFixed(1));
+      const b = calPreview.before, a = calPreview.after;
+      h += `<table><tr><th></th><th>now</th><th>fitted</th></tr>
+        <tr><td>room accuracy</td><td>${f(b.room_acc, 1)}</td><td>${f(a.room_acc, 1)}</td></tr>
+        <tr><td>median error (m)</td><td>${f(b.err_m)}</td><td>${f(a.err_m)}</td></tr>
+        <tr><td>RSSI error (dB)</td><td>${f(b.rssi_err_db)}</td><td>${f(a.rssi_err_db)}</td></tr>
+        ${Object.entries(calPreview.params).map(([k, [x, y]]) => `<tr><td>${esc(k)}</td><td>${x ?? "–"}</td><td>${y}</td></tr>`).join("")}</table>
+        <p class="hint">${calPreview.points} survey point(s)${calPreview.references.length ? " + references " + calPreview.references.map(esc).join(", ") : ""}. "Fitted" is leave-one-out, "now" is the current calibration on the same points.</p>
+        <div class="row"><button class="primary" data-act="cal-apply">Apply</button></div>`;
+    }
     return h;
   },
   background() {
@@ -570,11 +679,24 @@ $("#panel").addEventListener("click", (e) => {
   else if (act === "add-door") { addingDoor = !addingDoor; renderPanel(); }
   else if (act === "sel-door") { sel = `door:${id}`; changed({ rooms: false }); }
   else if (act === "del-door") { plan.doors.splice(+sel.slice(5), 1); sel = null; changed({ rooms: false }); }
-  else if (act === "sel-rx") { sel = id; renderPanel(); drawMarkers(); }
-  else if (act === "new-rx") { const v = $('[data-act="new-rx-id"]').value.trim(); if (v) { sel = v; renderPanel(); } }
-  else if (act === "del-rx") { plan.receivers = plan.receivers.filter((r) => r.id !== sel); changed({ rooms: false }); }
-  else if (act === "sel-ref") { sel = id; renderPanel(); drawMarkers(); }
-  else if (act === "del-ref") { plan.references = plan.references.filter((r) => r.device !== sel); changed({ rooms: false }); }
+  else if (act === "sel-item") { if (!e.target.closest(".handle")) selectItem(id); }
+  else if (act === "new-rx") { const v = $('[data-act="new-rx-id"]').value.trim(); if (v) selectItem(`rx:${v}`); }
+  else if (act === "del-item") {
+    const [kind, iid] = splitKey(sel);
+    if (kind === "rx") plan.receivers = plan.receivers.filter((r) => r.id !== iid);
+    else plan.references = plan.references.filter((r) => r.device !== iid);
+    sel = null; changed({ rooms: false });
+  }
+  else if (act === "start-capture") startCapture();
+  else if (act === "cancel-capture") { api("api/survey/cancel", { method: "POST" }); stopCapture(); }
+  else if (act === "del-point") { api(`api/survey/${encodeURIComponent(splitKey(sel)[1])}`, { method: "DELETE" }).then(() => { sel = null; loadSurvey(); }); }
+  else if (act === "calibrate") {
+    setStatus("Fitting…");
+    api("api/calibrate", { method: "POST" }).then((r) => { calPreview = r; refreshButtons(); renderPanel(); }).catch((err) => flash(err.message, true));
+  }
+  else if (act === "cal-apply") {
+    api("api/calibrate/apply", { method: "POST" }).then(() => { calPreview = null; flash("Calibration applied; tracking restarted"); loadSurvey(); }).catch((err) => flash(err.message, true));
+  }
   else if (act === "scale-start") { scalePts = []; layers.tool.clearLayers(); renderPanel(); }
   else if (act === "scale-apply") {
     const d = Math.hypot(scalePts[1][0] - scalePts[0][0], scalePts[1][1] - scalePts[0][1]);
@@ -590,6 +712,9 @@ $("#panel").addEventListener("click", (e) => {
 $("#panel").addEventListener("change", async (e) => {
   const t = e.target, act = t.dataset.act;
   if (act === "device") { device = t.value; poll(); }
+  else if (act === "survey-device") { surveyDevice = t.value; store.set("reiatsu.surveyDevice", t.value); }
+  else if (act === "held") { held = t.value; store.set("reiatsu.held", t.value); }
+  else if (act === "seconds") store.set("reiatsu.seconds", t.value);
   else if (act === "heat") { showHeat = t.checked; drawLive(); }
   else if (act === "max-gap") { plan.max_gap = +t.value || 0.4; changed({ rooms: false }); }
   else if (act === "rename") { if (renameRoom(sel, t.value.trim())) { sel = t.value.trim(); changed(); } else renderPanel(); }
@@ -602,9 +727,9 @@ $("#panel").addEventListener("change", async (e) => {
     changed({ rooms: false });
   }
   else if (act === "door-width") { plan.doors[+sel.slice(5)].width = +t.value || 0.8; changed({ rooms: false }); }
-  else if (act === "rx-z") { plan.receivers.find((r) => r.id === sel).z = +t.value; changed({ rooms: false }); }
+  else if (act === "rx-z") { plan.receivers.find((r) => r.id === splitKey(sel)[1]).z = +t.value; changed({ rooms: false }); }
   else if (act === "rx-p0") {
-    const r = plan.receivers.find((r) => r.id === sel);
+    const r = plan.receivers.find((r) => r.id === splitKey(sel)[1]);
     if (t.value === "") delete r.p0; else r.p0 = +t.value;
     changed({ rooms: false });
   }
@@ -621,7 +746,7 @@ $("#panel").addEventListener("change", async (e) => {
         drawBackground(); map.fitBounds(bounds()); changed({ rooms: false });
       };
       img.src = `api/background/${encodeURIComponent(image)}?v=${plan.background.v}`;
-    } catch (err) { setStatus(err.message, true); }
+    } catch (err) { flash(err.message, true); }
   }
   else if (act === "espresense" && t.files[0]) {
     try {
@@ -630,7 +755,7 @@ $("#panel").addEventListener("change", async (e) => {
       plan = normalize(p);
       if (bg) plan.background = bg;
       sel = null; changed(); map.fitBounds(bounds());
-    } catch (err) { setStatus(err.message, true); }
+    } catch (err) { flash(err.message, true); }
   }
 });
 
@@ -653,17 +778,9 @@ map.on("pm:create", (e) => {
 
 map.on("click", (e) => {
   const p = xy(e.latlng);
-  if (mode === "receivers" && sel) {
-    let r = plan.receivers.find((r) => r.id === sel);
-    if (!r) plan.receivers.push((r = { id: sel, x: p[0], y: p[1], z: 1.0 }));
-    else { [r.x, r.y] = p; delete r.room; }
-    changed({ rooms: false });
-  } else if (mode === "refs" && sel) {
-    let r = plan.references.find((r) => r.device === sel);
-    if (!r) plan.references.push({ device: sel, x: p[0], y: p[1] });
-    else [r.x, r.y] = p;
-    changed({ rooms: false });
-  } else if (mode === "background" && scalePts) {
+  if (mode === "devices" && sel) place(sel, p);
+  else if (mode === "survey" && !(capture && !capture.done)) { here = p; drawSurvey(); }
+  else if (mode === "background" && scalePts) {
     scalePts.push(p);
     L.circleMarker(e.latlng, { radius: 4, pmIgnore: true }).addTo(layers.tool);
     if (scalePts.length === 2) L.polyline(scalePts.map(([x, y]) => ll(x, y)), { dashArray: "4", pmIgnore: true }).addTo(layers.tool);
@@ -675,10 +792,111 @@ map.on("click", (e) => {
   }
 });
 
+function splitKey(key) {
+  if (!key) return [null, null];
+  const i = key.indexOf(":");
+  return i < 0 ? [null, key] : [key.slice(0, i), key.slice(i + 1)];
+}
+
+function selectItem(key) {
+  if (mode !== "devices") setMode("devices");
+  sel = key; renderPanel(); drawMarkers();
+}
+
+// Put a receiver ("rx:id") or a reference device ("dev:id") at p.
+function place(key, p) {
+  const [kind, id] = splitKey(key);
+  if (kind === "rx") {
+    const r = plan.receivers.find((r) => r.id === id);
+    if (r) { [r.x, r.y] = p; delete r.room; } else plan.receivers.push({ id, x: p[0], y: p[1], z: 1.0 });
+  } else if (kind === "dev") {
+    const r = plan.references.find((r) => r.device === id);
+    if (r) [r.x, r.y] = p; else plan.references.push({ device: id, x: p[0], y: p[1] });
+  } else return;
+  sel = key; changed({ rooms: false });
+}
+
+// Drag from the palette: pointer events, so it works with touch too.
+let ghost = null;
+$("#panel").addEventListener("pointerdown", (e) => {
+  const h = e.target.closest("[data-drag]");
+  if (!h) return;
+  e.preventDefault();
+  h.setPointerCapture(e.pointerId);
+  ghost = Object.assign(document.createElement("div"), { className: "ghost", textContent: splitKey(h.dataset.drag)[1] });
+  ghost.dataset.key = h.dataset.drag;
+  document.body.append(ghost);
+  ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px";
+});
+document.addEventListener("pointermove", (e) => { if (ghost) { ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px"; } });
+document.addEventListener("pointerup", (e) => {
+  if (!ghost) return;
+  const key = ghost.dataset.key, r = $("#map").getBoundingClientRect();
+  ghost.remove(); ghost = null;
+  if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+    place(key, xy(map.containerPointToLatLng([e.clientX - r.left, e.clientY - r.top])));
+  }
+});
+
+// --- survey -------------------------------------------------------------------
+
+async function loadSurvey() {
+  try {
+    surveyState = await api("api/survey");
+    surveyError = null;
+    here = [surveyState.next.x, surveyState.next.y];
+  } catch (err) { surveyError = err.message; }
+  if (mode === "survey") { drawSurvey(); renderPanel(); }
+}
+
+function drawSurvey() {
+  layers.survey.clearLayers();
+  if (mode !== "survey" || !surveyState) return;
+  for (const p of surveyState.points) {
+    const m = L.circleMarker(ll(p.x, p.y), { radius: splitKey(sel)[1] === p.id ? 9 : 7, color: "#fff", weight: 2, fillColor: RES_COLOR(p.residual), fillOpacity: 1, pmIgnore: true });
+    m.on("click", (e) => { L.DomEvent.stop(e); sel = `pt:${p.id}`; drawSurvey(); renderPanel(); });
+    m.addTo(layers.survey);
+  }
+  const t = surveyState.next;
+  L.marker(ll(t.x, t.y), { icon: L.divIcon({ className: "ring", html: "<div></div>" }), interactive: false, pmIgnore: true }).addTo(layers.survey);
+  if (here) {
+    const m = L.marker(ll(...here), { icon: L.divIcon({ className: "pin here" }), draggable: !(capture && !capture.done), pmIgnore: true });
+    m.on("dragend", () => { here = xy(m.getLatLng()); });
+    m.addTo(layers.survey);
+  }
+}
+
+async function startCapture() {
+  if (!here || !roomAt(here)) { flash("Tap the spot you're standing on, inside a room", true); return; }
+  try {
+    const seconds = +store.get("reiatsu.seconds", 30) || 30;
+    await api("api/survey/start", { method: "POST", body: JSON.stringify({ device: surveyDevice, x: here[0], y: here[1], seconds, held }) });
+    capture = { done: false, device: surveyDevice, remaining: seconds, receivers: {}, silent: [] };
+    renderPanel(); drawSurvey();
+    captureTimer = setInterval(async () => {
+      try {
+        const { capture: c } = await api("api/survey/capture");
+        if (!c || c.done) {
+          stopCapture();
+          flash(c?.saved ? "Point saved" : c?.error || "Capture ended", !c?.saved);
+          if (navigator.vibrate) navigator.vibrate(200);
+          loadSurvey();
+          return;
+        }
+        capture = c; renderPanel();
+      } catch (err) { flash(err.message, true); }
+    }, 500);
+  } catch (err) { flash(err.message, true); }
+}
+
+function stopCapture() { clearInterval(captureTimer); capture = null; renderPanel(); drawSurvey(); }
+
 function setMode(m) {
   map.pm.disableDraw();
-  mode = m; sel = null; addingDoor = false; scalePts = null;
+  mode = m; sel = null; addingDoor = false; scalePts = null; calPreview = null;
+  document.body.dataset.mode = m;
   layers.tool.clearLayers();
+  if (m === "survey") loadSurvey(); else layers.survey.clearLayers();
   $("#tabs").innerHTML = Object.entries(MODES).map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? "on" : ""}">${v}</button>`).join("");
   drawPlan(); drawLive(); renderPanel();
 }
@@ -689,13 +907,22 @@ $("#save").addEventListener("click", async () => {
     const out = await api("api/plan", { method: "PUT", body: JSON.stringify(plan) });
     saved = JSON.stringify(plan);
     derived = out.derived;
-    setStatus("Saved; tracking restarted on the new plan");
+    if (mode === "survey") loadSurvey();
+    flash("Saved; tracking restarted on the new plan");
     setTimeout(refreshButtons, 2500);
     drawPlan(); renderPanel();
-  } catch (err) { setStatus(err.message, true); }
+  } catch (err) { flash(err.message, true); }
 });
 $("#revert").addEventListener("click", () => {
   plan = JSON.parse(saved); sel = null; loadBackground(); changed();
+});
+$("#undo").addEventListener("click", () => undoRedo(undoStack, redoStack));
+$("#redo").addEventListener("click", () => undoRedo(redoStack, undoStack));
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k === "z" && !e.shiftKey) { e.preventDefault(); undoRedo(undoStack, redoStack); }
+  else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); undoRedo(redoStack, undoStack); }
 });
 window.addEventListener("beforeunload", (e) => { if (dirty()) e.preventDefault(); });
 
@@ -721,7 +948,7 @@ async function poll() {
   const res = await api("api/plan");
   materials = res.materials;
   plan = normalize(res.plan);
-  saved = JSON.stringify(plan);
+  saved = lastState = JSON.stringify(plan);
   derived = res.derived;
   planError = res.error;
   loadBackground();

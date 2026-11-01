@@ -133,3 +133,61 @@ def test_plan_extensions():
     assert {w.material for w in walls if w.rooms == ("Kitchen",)} == {"brick"}
     with pytest.raises(ValueError):
         load_plan(raw | {"y_axis": "sideways"})
+
+
+def test_survey_capture_guidance_and_calibration(tmp_path):
+    import time
+
+    from reiatsu.calibrate import starter_points
+    from reiatsu.plan import make_grid
+    from sim import world
+
+    path = tmp_path / "plan.yaml"
+    shutil.copy(Path(__file__).parent.parent / "sim/flat.yaml", path)
+    saved = []
+    app = App(path, saved.append)
+    srv = serve(app, "127.0.0.1", 0)
+    base = f"http://127.0.0.1:{srv.server_address[1]}/"
+
+    def call(p, method="GET", body=None):
+        req = urllib.request.Request(base + p, json.dumps(body).encode() if body is not None else None, method=method)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as err:
+            return err.code, json.loads(err.read())
+
+    # live capture: adverts of the held device count, others don't
+    assert call("api/survey/start", "POST", {"device": "phone", "x": 1.0, "y": 1.5, "seconds": 0.3})[0] == 200
+    for rssi in (-60, -62, -61):
+        app.survey.on_advert(Advert(0, "kitchen", "phone", rssi), time.time())
+    app.survey.on_advert(Advert(0, "kitchen", "watch", -40), time.time())
+    status, cap = call("api/survey/capture")
+    assert not cap["capture"]["done"] and cap["capture"]["receivers"]["kitchen"]["n"] == 3 and "bedroom" in cap["capture"]["silent"]
+    time.sleep(0.35)
+    assert call("api/survey/capture")[1]["capture"] == {"done": True, "saved": True, "id": app.survey.entries[0]["id"]}
+    assert call(f"api/survey/{app.survey.entries[0]['id']}", "DELETE")[1] == {"deleted": True}
+    assert call("api/calibrate", "POST")[0] == 400  # not enough points
+
+    # a simulated survey of the starter targets, raw samples as the capture stores them
+    rng = np.random.default_rng(2)
+    plan = load_plan(path)
+    truth = world.make_truth(plan, rng, field_sd=0.0)
+    ids = [r.id for r in plan.receivers]
+    for i, p in enumerate(starter_points(plan, make_grid(plan))):
+        here = np.repeat(p[None], 25, axis=0)
+        rssi = truth.hear(truth.mean(plan, here) - truth.body(plan, here, np.linspace(0, 2 * np.pi, 25)), rng)
+        samples = {ids[r]: row[~np.isnan(row)].tolist() for r, row in enumerate(rssi)}
+        app.survey.entries.append({"id": str(i), "device": "phone", "x": float(p[0]), "y": float(p[1]), "held": "hand", "samples": samples})
+    status, st = call("api/survey")
+    assert status == 200 and st["next"]["phase"] == "active" and st["next"]["starter_left"] == 0
+    assert st["loo"]["room_acc"] > 0.7 and all(pt["residual"] is not None for pt in st["points"])
+
+    status, prev = call("api/calibrate", "POST")
+    assert status == 200 and prev["after"]["room_acc"] > 0.7
+    assert prev["after"]["rssi_err_db"] < prev["before"]["rssi_err_db"]  # priors vs fitted (left out)
+    assert call("api/calibrate/apply", "POST")[1] == {"ok": True} and len(saved) == 1
+    cal = json.loads((tmp_path / "calibration.json").read_text())
+    assert abs(cal["n"] - truth.params.n) < 0.3
+    assert call("api/survey")[1]["calibrated"]
+    srv.shutdown()

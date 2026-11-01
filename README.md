@@ -24,8 +24,8 @@
 > [!WARNING]
 > **Project status: early, phase 2.** The engine, the simulator, the MQTT daemon with its
 > web UI and the Home Assistant bridge work and are tested, but have barely been tried on
-> real data. There's no calibration CLI yet, so the daemon runs on the channel priors
-> (plus per-receiver P0 overrides).
+> real data. Calibration happens in the web UI's survey; until you've run one, the
+> daemon uses the channel priors (plus per-receiver P0 overrides).
 > Anything marked *planned* below doesn't exist yet.
 
 <details>
@@ -266,18 +266,33 @@ starts empty and you draw the plan in the UI.
 * **Walls & doors**: walls are derived from the rooms. Tap one to set its material;
   add doors by tapping a wall and drag them along it. A door on an exterior wall is a
   door to the outside.
-* **Receivers**: lists the receivers that are online (from `reiatsu/receivers`) and ids
-  seen in adverts. Select one and tap the map to place it, then set its height and an
-  optional P0 override.
-* **References**: mark a tracked device that never moves (a door lock, say) at its
-  known spot. The live view then shows its error against that ground truth.
+* **Devices**: a palette of every receiver (online state from `reiatsu/receivers`, plus
+  ids seen in adverts) and every tracked device. Drag one onto the map (or select it and
+  tap the map), drag markers to move them, tap a marker for its settings: a receiver's
+  height and optional P0 override, or "not a reference". A tracked device placed on the
+  map is a *reference*: it never moves (a door lock, say), so the live view shows its
+  error, and calibration uses its adverts. Undo/redo (Ctrl+Z / Ctrl+Shift+Z) covers
+  every plan edit.
+* **Survey**: the calibration wizard, made for the phone you survey with. It shows one
+  target ("Go to Kitchen: next to the wall to the Hallway"): first the starter set (room
+  centres, 1 m from each receiver, both sides of each interior wall, doorways), then
+  wherever the planner finds the map least certain. Stand there (or drag the marker to
+  where you really are), pick the device you hold, press Start, and turn slowly once
+  during the 30 s while the panel shows per-receiver advert counts and medians. Points
+  are coloured by how well the current model fits them. Progress shows the
+  leave-one-out room accuracy, with a "good enough" hint once it stops improving.
+* **Calibrate** (in Survey): fits receiver power, path-loss exponent and wall losses to
+  the survey points and the reference devices' last 10 minutes of adverts. Each extra
+  device gets its own transmit offset. It shows now vs fitted (leave-one-out); *Apply*
+  writes `calibration.json` (keeping `.bak`) and restarts tracking with it.
 * **Live**: per device, the probability heatmap, the estimate with its σ circle, room
   probabilities, every receiver's online state and last RSSI, and the rooms whose mmWave
   sensor reports occupied.
 
 Saving writes the plan YAML (keeping `plan.yaml.bak`) and restarts tracking on the new
 plan. The YAML stays the source of truth, but comments in it don't survive a save from
-the UI. The layout works on a phone, ready for the calibration survey wizard.
+the UI. Next to the plan live `survey.json` (raw samples per captured point) and
+`calibration.json`. The layout works on a phone.
 
 The recording is one JSON object per line (`{"type": "advert", ...}` or
 `{"type": "occupancy", ...}`, `{"type": "receivers", ...}`). Replay runs it through the same code path as live,
@@ -438,11 +453,12 @@ for est in loc.tick(ts):                        # about once per second
     - [x] `reiatsu_bridge` HA integration: every proxy's adverts (IRK or MAC) and mmWave states to MQTT
     - [x] MQTT-only daemon with HA discovery, record and replay
     - [x] Web UI v1: plan editor (image + scale, rooms, walls, doors, receivers, references), ESPresense import, live map
-    - [ ] Calibration CLI (survey, node-to-node) and loading fitted parameters in the daemon
+    - [x] Web UI v0.4: devices palette with drag & drop, undo/redo, guided survey with live capture, calibrate and apply
+    - [ ] Route survey (walk a drawn path at a steady pace), node-to-node beaconing, marker icons/photos
     - [x] Home Assistant add-on with ingress, MQTT credentials from the Supervisor
     - [ ] NixOS module `services.reiatsu`
 - [ ] Phase 3
-    - [ ] Calibration survey wizard in the web UI ("stand here, press, 30 s, next point")
+    - [ ] Plan import from Apple RoomPlan (LiDAR) scans
     - [ ] SVG export with per-room ids for [ha-floorplan](https://github.com/ExperienceLovelace/ha-floorplan)
 
 See the [open issues](https://github.com/arunoruto/reiatsu/issues) for a full list of proposed features (and known issues).

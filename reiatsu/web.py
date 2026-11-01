@@ -11,6 +11,10 @@ saving writes it (keeping ``<plan>.bak``) and restarts tracking on the new plan.
     GET  /api/state?device=ID   live snapshot, with the belief grid of device ID
     PUT  /api/background        image body -> {image}; GET /api/background/<image>
     POST /api/import/espresense ESPresense companion config.yaml body -> {plan}
+    GET  /api/survey            points with residuals, leave-one-out accuracy, next target
+    POST /api/survey/start      {device, x, y, seconds, held}; GET /api/survey/capture: progress
+    POST /api/survey/cancel     DELETE /api/survey/<id>
+    POST /api/calibrate         fit on survey + reference devices -> before/after; .../apply saves it
 """
 
 from __future__ import annotations
@@ -31,8 +35,10 @@ from urllib.parse import parse_qs, urlsplit
 import numpy as np
 import yaml
 
-from .channel import LOSS_PRIOR
+from .calibrate import Calibration, fit
+from .channel import LOSS_PRIOR, ChannelParams
 from .plan import load_plan, make_grid
+from .survey import CALIBRATION, Survey, evaluate, leave_one_out, load_calibration, next_target, residuals, save_calibration
 
 log = logging.getLogger("reiatsu.web")
 STATIC = resources.files("reiatsu") / "web"
@@ -95,6 +101,73 @@ class App:
         self.on_save = on_save
         self.snapshot: dict = {}
         self.lock = threading.Lock()  # one save at a time
+        self.folder = self.path.parent
+        self.survey = Survey(self.folder)
+        self._cache: dict = {}
+        self._pending: tuple | None = None  # (plan key, Calibration, n points) from the last preview
+
+    def objects(self):
+        """(plan, grid) for the saved plan, cached."""
+        key = json.dumps(self.raw, sort_keys=True)
+        if self._cache.get("key") != key:
+            plan = load_plan(self.raw)
+            if not plan.rooms or not plan.receivers:
+                raise ValueError("draw rooms and place receivers first")
+            self._cache = {"key": key, "plan": plan, "grid": make_grid(plan)}
+        return self._cache["plan"], self._cache["grid"]
+
+    def calibration(self, plan) -> Calibration:
+        return load_calibration(self.folder, plan) or Calibration(ChannelParams.prior(plan))
+
+    def survey_state(self) -> dict:
+        plan, grid = self.objects()
+        pts = self.survey.points(plan)
+        cal_file = self.folder / CALIBRATION
+        key = (self._cache["key"], tuple(e["id"] for e in self.survey.entries), cal_file.stat().st_mtime if cal_file.exists() else 0)
+        if self._cache.get("survey_key") != key:
+            loo = leave_one_out(plan, grid, pts)
+            entries = self.survey.entries
+            if entries and "loo" not in entries[-1] and loo["room_acc"] is not None:
+                entries[-1]["loo"] = loo["room_acc"]  # accuracy history, for the "good enough" hint
+                self.survey._write()
+            res = residuals(plan, self.calibration(plan), pts)
+            points = [{k: e[k] for k in ("id", "device", "x", "y", "held")} | {"residual": r, "heard": len(p.rssi)} for e, p, r in zip(entries, pts, res)]
+            self._cache["survey_key"], self._cache["survey"] = key, {"points": points, "loo": loo, "next": next_target(plan, grid, pts)}
+        out = dict(self._cache["survey"])
+        hist = [e["loo"] for e in self.survey.entries if e.get("loo") is not None]
+        out["plateau"] = out["next"]["phase"] == "active" and len(hist) >= 3 and max(hist[-3:]) - min(hist[-3:]) <= 0.03
+        out["calibrated"] = cal_file.exists()
+        return out
+
+    def calibrate_preview(self) -> dict:
+        plan, grid = self.objects()
+        survey, refs = self.survey.points(plan), self.survey.reference_points(plan)
+        pts = survey + refs
+        if len(pts) < 3:
+            raise ValueError("capture at least 3 survey points first")
+        before = self.calibration(plan)
+        after = fit(plan, pts)
+        self._pending = (self._cache["key"], after, len(pts))
+        p, q = before.params, after.params
+        return {
+            "points": len(survey), "references": [r.device for r in refs],
+            "before": evaluate(plan, grid, before, pts), "after": leave_one_out(plan, grid, pts),
+            "params": {
+                "n": [round(p.n, 2), round(q.n, 2)],
+                **{f"loss {m}": [round(p.loss.get(m, 0), 1), round(q.loss[m], 1)] for m in q.loss},
+                **{f"P0 {r}": [round(p.p0[r], 1), round(q.p0[r], 1)] for r in q.p0},
+                **{f"offset {d}": [None, round(o, 1)] for d, o in after.offsets.items()},
+            },
+        }  # fmt: skip
+
+    def calibrate_apply(self) -> dict:
+        if not self._pending or self._pending[0] != self._cache.get("key"):
+            raise ValueError("run the calibration preview first")
+        _, cal, n = self._pending
+        save_calibration(self.folder, cal, n)
+        self._pending = None
+        self.on_save(self.raw)  # restart tracking with the new calibration
+        return {"ok": True}
 
     def save(self, raw: dict) -> dict:
         derived = derive(raw)  # raises ValueError on a broken plan
@@ -166,6 +239,10 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as err:
                 derived, error = None, str(err)
             return self._json({"plan": self.app.raw, "derived": derived, "error": error, "materials": sorted(LOSS_PRIOR)})
+        elif url.path == "/api/survey":
+            return self._handle(self.app.survey_state)
+        elif url.path == "/api/survey/capture":
+            return self._handle(lambda: {"capture": self.app.survey.status([r.id for r in self.app.objects()[0].receivers])})
         elif url.path == "/api/state":
             return self._json(self.app.state(parse_qs(url.query).get("device", [None])[0]))
         elif path and path[0] == "background" and BACKGROUND.match(path[1]):
@@ -185,6 +262,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle(lambda: derive(_plan_body(self._body())))
         if self.path == "/api/import/espresense":
             return self._handle(lambda: {"plan": from_espresense(yaml.safe_load(self._body()))})
+        if self.path == "/api/survey/start":
+            return self._handle(lambda: (lambda b: self.app.survey.start(b["device"], b["x"], b["y"], b.get("seconds", 30), b.get("held", "hand")) or {"ok": True})(json.loads(self._body())))
+        if self.path == "/api/survey/cancel":
+            return self._handle(lambda: self.app.survey.cancel() or {"ok": True})
+        if self.path == "/api/calibrate":
+            return self._handle(self.app.calibrate_preview)
+        if self.path == "/api/calibrate/apply":
+            return self._handle(self.app.calibrate_apply)
         self._json({"error": "not found"}, 404)
 
     def do_PUT(self):
@@ -192,6 +277,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle(lambda: (lambda raw: {"plan": raw, "derived": self.app.save(raw)})(_plan_body(self._body())))
         if self.path == "/api/background":
             return self._handle(lambda: {"image": self.app.save_background(self._body(), self.headers.get("Content-Type", ""))})
+        self._json({"error": "not found"}, 404)
+
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/survey/"):
+            entry = self.path.rsplit("/", 1)[-1]
+            return self._handle(lambda: {"deleted": self.app.survey.delete(entry)})
         self._json({"error": "not found"}, 404)
 
 
