@@ -112,6 +112,7 @@ def test_espresense_import():
         ],
     }
     plan = from_espresense(cfg)
+    assert plan["y_axis"] == "up" and plan["rooms"]["Office"][0] == [0.0, 5.0]  # copied, not mirrored
     assert [d["rooms"] for d in plan["doors"]] == [["Kitchen", "Living"]]  # Office shares no wall
     assert plan["receivers"] == [{"id": "kitchen_node", "x": 1.0, "y": 1.0, "z": 1.2}]
     p = load_plan(plan)
@@ -130,3 +131,5 @@ def test_plan_extensions():
     walls = load_plan(raw).walls
     assert {w.material for w in walls if w.rooms == ("Living Room",)} == {"glass"}
     assert {w.material for w in walls if w.rooms == ("Kitchen",)} == {"brick"}
+    with pytest.raises(ValueError):
+        load_plan(raw | {"y_axis": "sideways"})

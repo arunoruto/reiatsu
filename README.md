@@ -258,9 +258,11 @@ starts empty and you draw the plan in the UI.
 
 * **Background**: upload a PNG or JPEG floor plan, then draw a line of known length to
   set the scale. Or import an ESPresense companion `config.yaml` (rooms and nodes of a
-  floor). ESPresense has no doors, so every shared wall gets one to start with.
+  floor; both use y up, so nothing is mirrored). ESPresense has no doors, so every
+  shared wall gets one to start with.
 * **Rooms**: draw polygons or rectangles. Corners snap to other rooms, and nearly square
   corners and nearly aligned edges are straightened. Works without an image too.
+  *Orientation* flips or rotates the whole plan (not the background image).
 * **Walls & doors**: walls are derived from the rooms. Tap one to set its material;
   add doors by tapping a wall and drag them along it. A door on an exterior wall is a
   door to the outside.
@@ -345,11 +347,14 @@ error against the hidden truth.
 
 ### Floor plan
 
-Metres, single floor, x right and y down (image convention). The web UI writes this
-file. Excerpt of [`examples/flat.yaml`](examples/flat.yaml), plus a few fields the
+Metres, single floor, x right and **y up** (as in ESPresense and most floor-plan
+tools). The web UI writes this file. Plans saved by Reiatsu ≤ 0.3.1 were drawn y-down:
+mark them `y_axis: down` and the UI mirrors them into y-up on the next save. If a plan
+still comes out mirrored or rotated, *Rooms → Orientation* flips or rotates it. Excerpt of [`examples/flat.yaml`](examples/flat.yaml), plus a few fields the
 example doesn't use:
 
 ```yaml
+y_axis: up                   # default; "down" = legacy y-down plan, converted by the UI
 max_gap: 0.4                 # edges of two rooms closer than this share a wall
 rooms:
   Bathroom: [0, 0, 1.57, 3.27]                       # rectangle x0, y0, x1, y1
@@ -369,7 +374,7 @@ receivers:                                            # room defaults to the roo
   - {id: ha_usb, x: 3.4, y: 4.2, z: 0.5, p0: -70}       # P0 override: adapter in a cabinet
 references:                                           # stationary devices: ground truth
   - {device: nuki, x: 0.1, y: 4.0}
-background: {image: background.png, x: 0, y: 0, scale: 0.0178, opacity: 0.6}  # set by the UI
+background: {image: background.png, x: 0, y: 0, scale: 0.0178, opacity: 0.6}  # set by the UI; x, y = lower-left corner
 zones:                                                # optional mmWave zones
   Desk: [5.2, 0.2, 6.7, 1.4]
 ```

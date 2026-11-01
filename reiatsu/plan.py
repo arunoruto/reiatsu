@@ -170,6 +170,9 @@ def _polygon(v) -> np.ndarray:
 
 def load_plan(src: str | Path | dict) -> Plan:
     cfg = src if isinstance(src, dict) else yaml.safe_load(Path(src).read_text())
+    # The engine is mirror-invariant; y_axis only tells the web UI how to draw (default up).
+    if cfg.get("y_axis", "up") not in ("up", "down"):
+        raise ValueError(f"y_axis must be up or down, not {cfg['y_axis']!r}")
     rooms = {name: _polygon(v) for name, v in (cfg.get("rooms") or {}).items()}
     mats = {"interior": "drywall", "exterior": "brick", **cfg.get("materials", {})}
     pair_mat = {frozenset(w["rooms"]): w["material"] for w in cfg.get("walls") or []}  # one room: its exterior walls

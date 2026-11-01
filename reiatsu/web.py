@@ -70,7 +70,7 @@ def from_espresense(cfg: dict, floor: str | None = None) -> dict:
     if fl is None:
         raise ValueError(f"floor {floor!r} not found")
     rooms = {r["name"]: [[float(x), float(y)] for x, y, *_ in r["points"]] for r in fl.get("rooms") or []}
-    plan: dict = {"max_gap": 0.4, "rooms": rooms, "doors": []}
+    plan: dict = {"y_axis": "up", "max_gap": 0.4, "rooms": rooms, "doors": []}  # same convention, no mirroring
     pairs = {tuple(sorted(w.rooms)) for w in load_plan(plan).walls if len(w.rooms) == 2}
     plan["doors"] = [{"rooms": list(p), "width": 0.8} for p in sorted(pairs)]
     plan["receivers"] = [

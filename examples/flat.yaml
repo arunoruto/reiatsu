@@ -1,8 +1,9 @@
-# The real flat, as far as it is known. Single floor, metres, x right, y down
-# (image convention, so a scanned floor plan overlays directly in the web UI).
+# The real flat, as far as it is known. Single floor, metres, x right, y up
+# (the living room is at the top), as in ESPresense.
 # Rooms are polygons or [x0, y0, x1, y1] rectangles. Walls are derived: parallel
 # edges of two rooms closer than max_gap become one interior wall on their
 # midline; all other edges are exterior walls.
+y_axis: up
 max_gap: 0.4
 
 rooms:

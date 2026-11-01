@@ -91,9 +91,9 @@ td, th { text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--line
 <script src="vendor/leaflet-geoman.js"></script>
 <script>
 "use strict";
-// Plan coordinates are metres, x right, y down (image convention); Leaflet's CRS.Simple has y up.
-const ll = (x, y) => L.latLng(-y, x);
-const xy = (p) => [r2(p.lng), r2(-p.lat)];
+// Plan coordinates are metres, x right, y up (like ESPresense); so is Leaflet's CRS.Simple.
+const ll = (x, y) => L.latLng(y, x);
+const xy = (p) => [r2(p.lng), r2(p.lat)];
 const r2 = (v) => Math.round(v * 100) / 100;
 const $ = (s) => document.querySelector(s);
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();  // SVG attributes can't use var()
@@ -131,10 +131,47 @@ function normalize(p) {
       p.rooms[n] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     }
   }
+  for (const [n, v] of Object.entries(p.zones || {})) {
+    if (v.length === 4 && typeof v[0] === "number") {
+      const [x0, y0, x1, y1] = v;
+      p.zones[n] = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    }
+  }
   for (const k of ["walls", "doors", "receivers", "references"]) p[k] = p[k] || [];
   p.materials = { interior: "drywall", exterior: "brick", ...(p.materials || {}) };
   if (p.max_gap == null) p.max_gap = 0.4;
+  if (p.y_axis === "down") {
+    // saved y-down (Reiatsu ≤ 0.3.1 drew y down): mirror into y-up; the next save stores it so
+    const [, y0, , y1] = roomBox(p);
+    mapPoints(p, ([x, y]) => [x, r2(y0 + y1 - y)]);
+  }
+  p.y_axis = "up";
   return p;
+}
+
+function roomBox(p) {
+  const pts = Object.values(p.rooms).flat();
+  if (!pts.length) return [0, 0, 0, 0];
+  const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+// Apply f to every stored point of the plan (not the background image).
+function mapPoints(p, f) {
+  for (const n of Object.keys(p.rooms)) p.rooms[n] = p.rooms[n].map(f);
+  for (const n of Object.keys(p.zones || {})) p.zones[n] = p.zones[n].map(f);
+  p.doors.forEach((d) => { if (d.at) d.at = f(d.at); });
+  for (const r of [...p.receivers, ...p.references]) [r.x, r.y] = f([r.x, r.y]);
+  (p.extra_walls || []).forEach((w) => { w.a = f(w.a); w.b = f(w.b); });
+}
+
+// Flip or rotate the plan in place, keeping its bounding box's lower-left corner where it was.
+function orient(how) {
+  const [x0, y0, x1, y1] = roomBox(plan), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const f = { "flip-v": (x, y) => [x, -y], "flip-h": (x, y) => [-x, y], rotate: (x, y) => [-y, x] }[how];
+  mapPoints(plan, ([x, y]) => f(x - cx, y - cy));
+  const [nx, ny] = roomBox(plan);
+  mapPoints(plan, ([x, y]) => [r2(x - nx + x0), r2(y - ny + y0)]);
 }
 
 function setStatus(msg, err = false) {
@@ -243,7 +280,7 @@ function drawBackground() {
   if (!b?.image || !bgSize) return;
   const x = b.x || 0, y = b.y || 0;
   L.imageOverlay(`api/background/${encodeURIComponent(b.image)}?v=${b.v || 0}`,
-    [ll(x, y + bgSize[1] * b.scale), ll(x + bgSize[0] * b.scale, y)],
+    [ll(x, y), ll(x + bgSize[0] * b.scale, y + bgSize[1] * b.scale)],  // (x, y) = lower-left corner
     { opacity: b.opacity ?? 0.6, pmIgnore: true, interactive: false }).addTo(layers.bg);
 }
 
@@ -356,11 +393,11 @@ function drawLive() {
     const ctx = cv.getContext("2d"), img = ctx.createImageData(w, h);
     const [cr, cg, cb] = css("--heat").split(",").map(Number);
     cells.forEach(([x, y], i) => {
-      const k = 4 * (Math.round((y - y0) / res) * w + Math.round((x - x0) / res));
+      const k = 4 * ((h - 1 - Math.round((y - y0) / res)) * w + Math.round((x - x0) / res));  // row 0 = top
       img.data.set([cr, cg, cb, Math.round(230 * Math.sqrt(belief[i]))], k);
     });
     ctx.putImageData(img, 0, 0);
-    L.imageOverlay(cv.toDataURL(), [ll(x0 - res / 2, y0 + (h - 0.5) * res), ll(x0 + (w - 0.5) * res, y0 - res / 2)],
+    L.imageOverlay(cv.toDataURL(), [ll(x0 - res / 2, y0 - res / 2), ll(x0 + (w - 0.5) * res, y0 + (h - 0.5) * res)],
       { className: "heat", pmIgnore: true, interactive: false }).addTo(layers.heat);
   }
   const d = live.devices?.[device];
@@ -431,6 +468,8 @@ const PANELS = {
     const names = Object.keys(plan.rooms);
     let h = `<h3>Draw</h3><div class="row"><button data-act="draw-poly">Polygon</button><button data-act="draw-rect">Rectangle</button></div>
       <p class="hint">Tap the corners and finish on the first point. Corners snap to other rooms; nearly square corners and edges close to a neighbour's are straightened. Rooms closer than the wall gap share a wall.</p>
+      <h3>Orientation</h3><div class="row"><button data-act="orient" data-id="flip-v">Flip ↕</button><button data-act="orient" data-id="flip-h">Flip ↔</button><button data-act="orient" data-id="rotate">Rotate 90°</button></div>
+      <p class="hint">For a plan that came out mirrored or rotated: transforms rooms, doors, receivers and references (not the background image).</p>
       <div class="row"><label>Wall gap</label><input type="number" step="0.05" min="0.05" data-act="max-gap" value="${plan.max_gap}"> m</div>
       <h3>Rooms</h3><ul class="list">`;
     h += names.map((n) => `<li class="${n === sel ? "sel" : ""}" data-act="sel-room" data-id="${esc(n)}"><span class="grow">${esc(n)}</span></li>`).join("") || '<p class="hint">No rooms yet.</p>';
@@ -508,7 +547,7 @@ const PANELS = {
       } else {
         h += `<div class="row"><button data-act="scale-start" class="${scalePts ? "primary" : ""}">${scalePts ? `Tap point ${scalePts.length + 1} of 2…` : "Draw a line of known length"}</button></div>`;
       }
-      h += `<div class="row"><label>Offset x</label><input type="number" step="0.05" data-act="bg-x" value="${b.x || 0}"> y <input type="number" step="0.05" data-act="bg-y" value="${b.y || 0}"></div>
+      h += `<div class="row"><label>Lower-left x</label><input type="number" step="0.05" data-act="bg-x" value="${b.x || 0}"> y <input type="number" step="0.05" data-act="bg-y" value="${b.y || 0}"></div>
         <div class="row"><label>Opacity</label><input type="range" min="0.1" max="1" step="0.05" data-act="bg-opacity" value="${b.opacity ?? 0.6}"></div>
         <div class="row"><button class="danger" data-act="bg-remove">Remove image</button></div>`;
     }
@@ -525,6 +564,7 @@ $("#panel").addEventListener("click", (e) => {
   if (!t || t.tagName === "INPUT" || t.tagName === "SELECT") return;
   const act = t.dataset.act, id = t.dataset.id;
   if (act === "draw-poly" || act === "draw-rect") map.pm.enableDraw(act === "draw-poly" ? "Polygon" : "Rectangle", { snappable: true, snapDistance: 14 });
+  else if (act === "orient") { orient(id); changed(); map.fitBounds(bounds()); }
   else if (act === "sel-room") { sel = id; drawRooms(); renderPanel(); }
   else if (act === "del-room") { deleteRoom(sel); sel = null; changed(); }
   else if (act === "add-door") { addingDoor = !addingDoor; renderPanel(); }
@@ -540,7 +580,7 @@ $("#panel").addEventListener("click", (e) => {
     const d = Math.hypot(scalePts[1][0] - scalePts[0][0], scalePts[1][1] - scalePts[0][1]);
     const want = +$('[data-act="scale-len"]').value;
     if (d > 0 && want > 0) {
-      plan.background.scale *= want / d;  // scales around the image's top-left corner (the offset)
+      plan.background.scale *= want / d;  // scales around the image's lower-left corner (the offset)
     }
     scalePts = null; layers.tool.clearLayers(); drawBackground(); changed({ rooms: false });
   }
