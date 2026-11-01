@@ -15,4 +15,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -e .[test]
       - run: pytest -q
-      - run: python -m sim.run --scenario quick
+      - run: python -m sim.run --scenario default --seeds 5 --check

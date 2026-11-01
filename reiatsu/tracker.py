@@ -63,6 +63,9 @@ class Tracker:
     mmwave_fnr: float = 0.15  # P(sensor reports empty | device's person is in the area)
     mmwave_p_other: float = 0.3  # P(area reported occupied | device not there): other people, false alarms
     mmwave_tau: float = 5.0  # seconds of a persisting sensor state worth one independent observation
+    offsets: np.ndarray = field(default_factory=lambda: np.arange(-12.0, 12.1, 2.0))  # dB, this device vs the calibration phone
+    offset_sd: float = 6.0  # prior on the device's tx offset
+    offset_forget: float = 1e-3  # per heard step, lets the offset estimate move again
 
     def __post_init__(self):
         if self.kernel is None:
@@ -73,6 +76,8 @@ class Tracker:
         self.heard_ts: float | None = None
         self.room: int | None = None
         self.occupancy: dict[str, bool] = {}
+        self.offset_w = np.exp(-0.5 * (self.offsets / self.offset_sd) ** 2)
+        self.offset_w /= self.offset_w.sum()
         self._occ_factor = np.ones(len(self.grid.xy))
 
     def set_occupancy(self, area: str, occupied: bool):
@@ -105,11 +110,18 @@ class Tracker:
             if rx in self.rx_index:
                 y[self.rx_index[rx]] = rssi
         if not np.isnan(y).all():
-            ll = self.likelihood(self.mu, y)
-            self.belief = self.belief * np.exp(ll - ll.max())
-            self.belief /= self.belief.sum()
+            # joint posterior over (cell, tx offset), offset kept as a small discrete set
+            ll = np.array([self.likelihood(self.mu + o, y) for o in self.offsets])  # (K, C)
+            joint = np.exp(ll - ll.max()) * self.belief * self.offset_w[:, None]
+            w = joint.sum(1)
+            self.offset_w = (1 - self.offset_forget) * w / w.sum() + self.offset_forget / len(w)
+            self.belief = joint.sum(0) / joint.sum()
             self.heard_ts = ts
         return self.estimate(ts)
+
+    @property
+    def offset(self) -> float:
+        return float(self.offset_w @ self.offsets)
 
     def estimate(self, ts: float) -> Estimate:
         g = self.grid

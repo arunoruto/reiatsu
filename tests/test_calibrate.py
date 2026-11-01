@@ -28,7 +28,7 @@ def test_fit_recovers_hidden_parameters(setup):
     body = truth.body_db / 2  # mean body shadowing over a 360 degree turn
     assert cal.params.n == pytest.approx(truth.params.n, abs=0.25)
     for m in plan.materials:
-        assert cal.params.loss[m] == pytest.approx(truth.params.loss[m], abs=3.0), m
+        assert cal.params.loss[m] == pytest.approx(truth.params.loss[m], abs=1.5), m
     for r, p0 in truth.params.p0.items():
         assert cal.params.p0[r] == pytest.approx(p0 - body, abs=2.5), r
     # calibrated beats the priors on predicting the truth
@@ -51,10 +51,13 @@ def test_gp_corrects_unmodelled_shadowing():
     assert err[True] < err[False]
 
 
-def test_summarize_marks_rarely_hearing_receivers_missing():
-    p = summarize([1, 2], {"a": [-60, -62, -61], "b": [-95]}, 10, ["a", "b", "c"])
-    assert p.rssi == {"a": -61}
-    assert p.missing == {"b", "c"}
+def test_summarize_uses_censored_median():
+    # "b" heard only its 6 strongest of 10 adverts: the plain median of those (-90.5)
+    # overstates it, the censored median is the 5th strongest of the 9 not dropped
+    samples = {"a": [-60.0] * 9, "b": [-88, -89, -90, -91, -92, -93], "c": [-97, -98]}
+    p = summarize([1, 2], samples, 10, ["a", "b", "c", "d"], p_drop=0.1)
+    assert p.rssi == {"a": -60, "b": -92}
+    assert p.missing == {"c", "d"}
 
 
 def test_weak_labels_are_used(setup):

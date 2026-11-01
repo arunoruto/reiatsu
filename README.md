@@ -180,8 +180,10 @@ repository, with the add-on using the GHCR images above.
 ### Simulator
 
 ```sh
-python -m sim.run --scenario default   # 2 h of simulated life, ~30 s
-python -m sim.run --scenario quick     # 15 min
+python -m sim.run                          # default scenario, seeds 1..5 in parallel, ~1–2 min
+python -m sim.run --scenario quick --seeds 1
+python -m sim.run --scenario ideal-mmwave  # mmWave in every room, nobody else home
+python -m sim.run --check                  # CI: fail if mean room accuracy drops >3 points below sim/expected.json
 pytest -q
 ```
 
@@ -190,23 +192,42 @@ losses, receiver offsets, path-loss exponent, a spatially correlated shadowing f
 It adds body shadowing of 0–12 dB depending on which way the person faces,
 log-normal fading (σ = 5 dB) and dropped adverts. The phone advertises at 0.5–2 Hz
 while awake and only about every 50 s while locked. A person walks between rooms
-through the doors and stays a while in each. Each config is scored against the
-truth once per second:
+through the doors and stays a while in each.
 
-| config | room acc | time to correct room (median s) | false flips/h | pos err (median m) |
-|---|---:|---:|---:|---:|
-| baseline: nearest receiver | 53.1% | 56 | 55.7 | 3.35 |
-| priors only | 63.3% | 35 | 17.1 | 1.49 |
-| node-to-node only | 69.5% | 35 | 13.1 | 1.27 |
-| survey 26 pts | 74.9% | 30 | 9.0 | 1.09 |
-| survey 36 pts | 75.0% | 30 | 9.5 | 1.07 |
-| survey 36 pts, no walls | 72.8% | 30 | 7.5 | 1.19 |
-| survey 36 pts + mmWave | 93.2% | 11 | 5.5 | 0.99 |
+The `default` scenario matches the real flat's sensors: mmWave only in the bathroom,
+hallway, kitchen and living room. A second, untracked resident also triggers those
+sensors, and each sensor raises about one false alarm per hour. The baseline works
+like Bermuda: nearest receiver by smoothed distance, with a max-speed filter,
+hysteresis and a minimum dwell before switching.
 
-*`--scenario default --seed 1`. "26 pts" is the starter survey; "36 pts" adds 10
-active-learning points.* Most of the remaining error happens while the phone is
-locked: with one advert every ~50 s, the tracker can't see someone change rooms
-until the next advert arrives.
+Each config is scored against the truth once per second. "Awake" and "locked" split
+room accuracy by the phone's state. "RSSI map err" is the calibrated map's mean
+error against the hidden truth.
+
+| config | room acc | acc awake | acc locked | time to correct room (s) | false flips/h | pos err (m) | RSSI map err (dB) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| baseline: nearest receiver (Bermuda-like) | 56.8% ± 7.9 | 70.4% ± 5.7 | 51.7% ± 9.0 | 34 ± 6 | 19.8 ± 4.6 | 2.65 ± 0.44 | – |
+| priors only | 60.4% ± 9.0 | 70.9% ± 13.2 | 55.7% ± 8.8 | 34 ± 15 | 14.6 ± 3.4 | 1.42 ± 0.15 | 7.2 ± 1.0 |
+| node-to-node only | 66.2% ± 2.9 | 80.2% ± 3.6 | 60.8% ± 5.2 | 31 ± 8 | 13.7 ± 2.6 | 1.25 ± 0.08 | 7.2 ± 1.5 |
+| survey: starter | 68.5% ± 6.0 | 80.5% ± 9.0 | 63.4% ± 8.2 | 25 ± 11 | 11.7 ± 3.3 | 1.18 ± 0.11 | 1.8 ± 0.3 |
+| survey: +10 active | 67.7% ± 3.8 | 81.2% ± 9.7 | 62.2% ± 5.0 | 26 ± 10 | 11.3 ± 3.1 | 1.18 ± 0.11 | 1.6 ± 0.3 |
+| survey: +10 random | 68.7% ± 5.2 | 81.3% ± 8.5 | 63.4% ± 7.1 | 26 ± 10 | 11.9 ± 4.0 | 1.19 ± 0.11 | 1.6 ± 0.3 |
+| survey: +10 active, no walls | 66.3% ± 5.3 | 79.2% ± 5.3 | 61.0% ± 7.8 | 29 ± 12 | 11.0 ± 4.6 | 1.30 ± 0.11 | 4.4 ± 1.0 |
+| survey: +10 active + mmWave | 77.0% ± 3.6 | 86.4% ± 9.2 | 73.3% ± 1.9 | 14 ± 6 | 17.3 ± 3.2 | 1.08 ± 0.11 | 1.6 ± 0.3 |
+
+*`--scenario default`, seeds 1–5, mean ± sd.* What the numbers say so far:
+
+* Most of the remaining error happens while the phone is locked: with one advert
+  every ~50 s, a room change shows up only when the next advert arrives.
+* Beyond the starter set, more survey points barely help. The map error is already
+  down to ~1.7 dB, and per-advert noise (fading plus body shadowing) dominates.
+  Active points do no better than random ones here.
+* Each device's transmit offset relative to the survey phone is learned online
+  (a small discrete posterior marginalized jointly with position). That's why
+  node-to-node calibration alone works even though it can't pin the phone's
+  absolute power.
+* Realistic mmWave coverage adds about 9 points. With sensors in every room and
+  nobody else home (`ideal-mmwave`), it reaches about 93%.
 
 ### Floor plan
 
@@ -244,9 +265,10 @@ longest shared wall.
    receiver, a pair of points on either side of each interior wall, and every
    doorway.
 3. **Per point**: stand there for 20–30 s, holding the phone as usual, and turn
-   slowly through 360°. Reiatsu keeps the median RSSI per receiver. Receivers that
-   heard fewer than 30% of the adverts count as "not heard" (censored, below
-   sensitivity).
+   slowly through 360°. Reiatsu keeps the median RSSI per receiver over all adverts
+   sent, with the unheard ones counted as below sensitivity. Taking the median of
+   only the heard ones would bias weak receivers high. A receiver whose median falls
+   below sensitivity counts as "not heard" (censored).
 4. **Active learning** (`next_point`): next, stand where the Gaussian process is
    least sure and where the expected fingerprint is easiest to mistake for
    another room.

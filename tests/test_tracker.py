@@ -85,3 +85,14 @@ def test_locator_windows_adverts_per_device(world):
     assert [e.device_id for e in out] == ["phone", "watch"]
     assert loc.trackers["phone"].occupancy == {"Desk": True}
     assert loc.tick(2)[0].ts == 2  # silent devices keep reporting
+
+
+def test_learns_device_tx_offset(world):
+    plan, grid, mu, _ = world
+    t = tracker(world)
+    c = grid.nearest([8.8, 2.3])  # bedroom
+    readings = {r.id: float(mu[i, c]) + 8 for i, r in enumerate(plan.receivers)}  # louder phone
+    for s in range(1, 121):
+        est = t.step(s, readings)
+    assert est.room == "Bedroom"
+    assert t.offset == pytest.approx(8, abs=2)

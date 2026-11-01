@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.sparse.csgraph import dijkstra
 
-from reiatsu.calibrate import NodeLink, SurveyPoint, summarize
+from reiatsu.calibrate import NodeLink, SurveyPoint, censored_median, summarize
 from reiatsu.channel import LOSS_PRIOR, ChannelParams, predict, rf_position, geometry
 from reiatsu.locator import Advert, Occupancy
 from reiatsu.plan import Grid, Plan
@@ -131,22 +131,43 @@ def adverts(plan: Plan, truth: Truth, traj: Trajectory, rng, device: str = "phon
     return sorted(out, key=lambda a: a.ts)
 
 
-def mmwave(grid: Grid, traj: Trajectory, rng, lag: float = 1.5, dropout: float = 0.15) -> list[Occupancy]:
-    """Per-room presence sensors: lagged, and sometimes lose a person sitting still."""
-    dt = traj.t[1] - traj.t[0]
+def mmwave(
+    grid: Grid,
+    people: list[Trajectory],
+    rng,
+    rooms: list[str] | None = None,
+    lag: float = 1.5,
+    dropout: float = 0.15,
+    fp_per_hour: float = 0.0,
+) -> list[Occupancy]:
+    """Presence sensors in ``rooms`` (default all) seeing every person in ``people``.
+
+    Lagged; sometimes lose a person sitting still; ``fp_per_hour`` spurious
+    5-30 s detections per sensor.
+    """
+    dt = people[0].t[1] - people[0].t[0]
+    n = len(people[0].t)
     out = []
     for r, name in enumerate(grid.rooms):
-        occ = np.roll(traj.room == r, int(lag / dt))
-        occ[: int(lag / dt)] = False
-        edges = np.flatnonzero(np.diff(np.r_[0, occ.astype(int), 0]))
-        for start, end in zip(edges[::2], edges[1::2]):
-            if (end - start) * dt > 90 and rng.random() < dropout:
-                a = start + int(60 / dt)
-                occ[a : min(end, a + int(rng.uniform(30, 120) / dt))] = False
+        if rooms is not None and name not in rooms:
+            continue
+        occ = np.zeros(n, bool)
+        for traj in people:
+            here = np.roll(traj.room == r, int(lag / dt))
+            here[: int(lag / dt)] = False
+            edges = np.flatnonzero(np.diff(np.r_[0, here.astype(int), 0]))
+            for start, end in zip(edges[::2], edges[1::2]):
+                if (end - start) * dt > 90 and rng.random() < dropout:
+                    a = start + int(60 / dt)
+                    here[a : min(end, a + int(rng.uniform(30, 120) / dt))] = False
+            occ |= here
+        for _ in range(rng.poisson(fp_per_hour * n * dt / 3600)):
+            a = int(rng.integers(n))
+            occ[a : a + int(rng.uniform(5, 30) / dt)] = True
         prev = False
         for k in np.flatnonzero(np.diff(np.r_[0, occ.astype(int)])):
             prev = not prev
-            out.append(Occupancy(float(traj.t[k]), name, prev))
+            out.append(Occupancy(float(people[0].t[k]), name, prev))
     return sorted(out, key=lambda o: o.ts)
 
 
@@ -159,11 +180,11 @@ def survey(plan: Plan, truth: Truth, pts: list[np.ndarray], rng, seconds: int = 
         here = np.repeat(np.asarray(p)[None], seconds, axis=0)
         rssi = truth.hear(truth.mean(plan, here) - truth.body(plan, here, facing), rng)
         samples = {ids[r]: row[~np.isnan(row)].tolist() for r, row in enumerate(rssi)}
-        out.append(summarize(p, samples, seconds, ids))
+        out.append(summarize(p, samples, seconds, ids, truth.p_drop))
     return out
 
 
-def node_links(plan: Plan, truth: Truth, rng, samples: int = 30, min_frac: float = 0.3) -> list[NodeLink]:
+def node_links(plan: Plan, truth: Truth, rng, samples: int = 30) -> list[NodeLink]:
     """Every receiver beacons for a while; every other receiver reports the median."""
     out = []
     for tx in plan.receivers:
@@ -175,7 +196,7 @@ def node_links(plan: Plan, truth: Truth, rng, samples: int = 30, min_frac: float
             loss = np.array([truth.params.loss[m] for m in plan.materials])
             mean = truth.params.p0[rx.id] + truth.params.tx_offset - 10 * truth.params.n * logd[0] - counts[0] @ loss + truth.shadow(pos)[r, 0]
             rssi = truth.hear(np.full((1, samples), mean), rng)[0]
-            heard = rssi[~np.isnan(rssi)]
-            if len(heard) >= min_frac * samples:
-                out.append(NodeLink(tx.id, rx.id, float(np.median(heard))))
+            med = censored_median(rssi[~np.isnan(rssi)].tolist(), samples, truth.p_drop)
+            if med is not None:
+                out.append(NodeLink(tx.id, rx.id, med))
     return out

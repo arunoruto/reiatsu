@@ -2,8 +2,10 @@
 
 Survey protocol per point: stand at the point for 20-30 s holding the phone
 as usual and turn slowly through 360 degrees. Per receiver keep the median
-RSSI; receivers that heard fewer than ``min_frac`` of the adverts count as
-"not heard" (a censored observation: the signal was below sensitivity).
+RSSI over *all* adverts sent, unheard ones counting as below sensitivity
+(the median of only the heard ones is biased high for weak receivers). If
+the median itself is below sensitivity the receiver counts as "not heard",
+a censored observation.
 """
 
 from __future__ import annotations
@@ -48,8 +50,21 @@ class WeakLabel:
     missing: frozenset[str] = frozenset()
 
 
-def summarize(xy, samples: dict[str, list[float]], n_adverts: int, receivers: list[str], min_frac: float = 0.3) -> SurveyPoint:
-    heard = {r: float(np.median(v)) for r, v in samples.items() if len(v) >= min_frac * n_adverts}
+def censored_median(heard: list[float], n_sent: int, p_drop: float = 0.1) -> float | None:
+    """Median RSSI over all ``n_sent`` adverts when only ``heard`` were received.
+
+    Randomly dropped adverts (``p_drop``) say nothing about signal strength;
+    the rest of the unheard ones were below sensitivity, so they sit at the
+    bottom of the ranking. None if the median is below sensitivity.
+    """
+    rank = int(0.5 * n_sent * (1 - p_drop))
+    v = sorted(heard, reverse=True)
+    return float(v[rank]) if rank < len(v) else None
+
+
+def summarize(xy, samples: dict[str, list[float]], n_adverts: int, receivers: list[str], p_drop: float = 0.1) -> SurveyPoint:
+    med = {r: censored_median(samples.get(r, []), n_adverts, p_drop) for r in receivers}
+    heard = {r: m for r, m in med.items() if m is not None}
     return SurveyPoint(np.asarray(xy, float), heard, frozenset(set(receivers) - set(heard)))
 
 
