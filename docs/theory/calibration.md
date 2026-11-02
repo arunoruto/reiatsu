@@ -33,10 +33,10 @@ them.
 ## MAP fit
 
 Parameters $\theta = (P_{0,r}, n, L_m, \delta_g)$. Every observation $i$ (receiver
-$r_i$, offset group $g_i$, $\ell_i = \log_{10} d$, wall counts $\mathbf{k}_i$) predicts
+$r_i$, offset group $g_i$, distance $d_i$, wall counts $\mathbf{W}_i$) predicts
 
 $$
-\hat y_i(\theta) = P_{0,r_i} + \delta_{g_i} - 10\, n\, \ell_i - \mathbf{k}_i^\top \mathbf{L}.
+\hat y_i(\theta) = P_{0,r_i} + \delta_{g_i} - 10\, n \log_{10} d_i - \mathbf{W}_i^\top \mathbf{L}.
 $$
 
 Offset groups are (device, phone position) pairs, plus one for node links. The most common
@@ -78,14 +78,16 @@ $\varepsilon_i = \tilde y_{ir} - \hat\mu_r(\mathbf{x}_i)$ (`ResidualGP`; Rasmuss
 Williams 2006):
 
 $$
-k(\mathbf{x}, \mathbf{x}') = s_f^2 \exp\!\left(-\frac{\lVert \mathbf{x} - \mathbf{x}' \rVert^2}{2\ell^2}\right),
+k_\text{GP}(\mathbf{x}, \mathbf{x}') = s_f^2 \exp\!\left(-\frac{\lVert \mathbf{x} - \mathbf{x}' \rVert^2}{2\eta^2}\right),
 \quad
-g_r(\mathbf{x}) = \mathbf{k}_\mathbf{x}^\top (K + \sigma_n^2 I)^{-1} \boldsymbol{\varepsilon},
+g_r(\mathbf{x}) = \mathbf{k}_\mathbf{x}^\top (\mathbf{G} + \sigma_n^2 I)^{-1} \boldsymbol{\varepsilon},
 \quad
-v_r(\mathbf{x}) = s_f^2 - \mathbf{k}_\mathbf{x}^\top (K + \sigma_n^2 I)^{-1} \mathbf{k}_\mathbf{x}
+v_r(\mathbf{x}) = s_f^2 - \mathbf{k}_\mathbf{x}^\top (\mathbf{G} + \sigma_n^2 I)^{-1} \mathbf{k}_\mathbf{x}
 $$
 
-with $\ell = 1.5$ m, $s_f = 3$ dB, $\sigma_n = 2$ dB. The tracker uses
+with $\mathbf{G}_{ij} = k_\text{GP}(\mathbf{x}_i, \mathbf{x}_j)$,
+$(\mathbf{k}_\mathbf{x})_i = k_\text{GP}(\mathbf{x}, \mathbf{x}_i)$, $\eta = 1.5$ m,
+$s_f = 3$ dB and $\sigma_n = 2$ dB. The tracker uses
 $\mu_r + g_r$. The isotropic kernel ignores walls; a wall-aware kernel is the upgrade if
 residuals jump at walls.
 
@@ -93,11 +95,13 @@ residuals jump at walls.
 
 The Fit table compares the current calibration on the points with the new fit,
 **leave-one-out**: each point $i$ is located with $\hat\theta^{(-i)}$, fitted on all the
-other points (`survey.leave_one_out`),
+other points, residual GP included (`survey.leave_one_out`, `survey.locate`),
 
 $$
-\hat c_i = \arg\max_c \sum_r \log p\big(\tilde y_{ir} \mid \mu^{(-i)}_r(c) + \delta_{g_i}\big),
+\hat c_i = \arg\max_c \sum_r \log p\big(\tilde y_{ir} \mid \mu^{(-i)}_r(c) + \delta^{(-i)}_{g_i}\big),
 $$
+
+where $\delta^{(-i)}_{g_i} = 0$ if no other point shares the group of point $i$.
 
 which gives room accuracy $\frac{1}{N}\sum_i \mathbb{1}[\rho(\hat c_i) = \rho(\mathbf{x}_i)]$, the
 median error $\lVert \mathbf{x}_{\hat c_i} - \mathbf{x}_i \rVert$, and the mean absolute
@@ -106,8 +110,9 @@ RSSI error over heard receivers.
 ## Survey planner
 
 **Starter set** (`starter_targets`): room centres, a point about 1 m from each receiver,
-a pair of points 0.6 m either side of each interior wall, and every doorway. Points
-closer than 0.5 m to an earlier one are merged. The wizard visits them nearest-first, and
+a pair of points 0.6 m either side of each interior wall at least 0.6 m long (a side is
+skipped if no grid cell lies within 0.3 m of it), and every doorway. Points closer than
+0.5 m to an earlier one are merged. The wizard visits them nearest-first, and
 a target counts as done once a captured point lies within 0.75 m.
 
 **Active points** (`next_point`): the cell whose fingerprint is both uncertain and easy to
@@ -120,6 +125,6 @@ $$
 $$
 
 excluding cells within 0.75 m of points already captured. The UI says "good enough" once
-the leave-one-out accuracy has changed by at most 3 points over the last three active
-points. In the simulator, active points did no better than random ones after the starter
+the starter set is done (the next target comes from the planner) and the leave-one-out
+accuracy has changed by at most 3 points over the last three captured points. In the simulator, active points did no better than random ones after the starter
 set: the map error is already about 1.7 dB, and per-advert noise dominates.

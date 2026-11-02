@@ -91,15 +91,19 @@ class Tracker:
         """Receivers currently online: only those count as "not heard" when silent."""
         self._listening = np.array([r in receivers for r in self.receivers])
 
-    def set_occupancy(self, area: str, occupied: bool):
+    def set_occupancy(self, area: str, occupied: bool) -> bool:
+        """Fold in an mmWave state; False (and ignored) if ``area`` is no room or zone of the plan."""
+        if area not in self.grid.areas:
+            return False
         self.occupancy[area] = occupied
         if not self.carried:
-            return
+            return True
         f, miss, other = np.ones(len(self.grid.xy)), self.mmwave_fnr, self.mmwave_p_other
         for name, occ in self.occupancy.items():
             mask = self.grid.areas[name]
             f *= np.where(mask, 1 - miss, other) if occ else np.where(mask, miss, 1 - other)
         self._occ_factor = f ** (1 / self.mmwave_tau)
+        return True
 
     def hint(self, room: str, confidence: float = 0.9):
         """Weak label, e.g. "phone is charging" => bedroom."""

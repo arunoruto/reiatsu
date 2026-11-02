@@ -11,8 +11,9 @@ the UI on that phone.
    Hallway") and a pulsing ring marks the spot. Stand there. If you're not exactly on it,
    drag the blue marker or tap the map where you are. Or switch to **Measure anywhere** and
    tap your position.
-4. **Start**. For 30 s (45 s lying down), turn slowly once, holding the phone as you
-   usually do; lying down, keep the screen on. The panel shows adverts and the median per
+4. **Start**. For 30 s, turn slowly once, holding the phone as you
+   usually do. *Lying down* raises the duration to 45 s (back to 30 s when you switch
+   back) and asks you to keep the screen on. The panel shows adverts and the median per
    receiver. If a receiver gets fewer than 10 adverts, the phone was probably locked.
 5. Repeat. Points are coloured by how well the model fits them (green < 4 dB, yellow < 8,
    red worse); tap one to delete it. *Progress* shows the leave-one-out room accuracy, and

@@ -137,3 +137,15 @@ def test_reference_device_ignores_mmwave(world):
     before = t.belief.copy()
     t.step(400, {})
     assert np.abs(t.belief - before).sum() < 0.1
+
+
+def test_unknown_mmwave_area_is_ignored(world, caplog):
+    # a sensor mapped to a room the plan doesn't have (or one renamed in the UI) mustn't crash tracking
+    loc = Locator(lambda: tracker(world))
+    loc.set_occupancy(Occupancy(0, "Office", True))  # before any tracker exists
+    loc.advert(Advert(0.5, "kitchen", "phone", -60))
+    loc.tick(1)
+    loc.set_occupancy(Occupancy(1, "Office", False))
+    loc.set_occupancy(Occupancy(1, "Office", True))
+    assert loc.tick(2)[0].room
+    assert caplog.text.count("'Office' is no room or zone") == 1

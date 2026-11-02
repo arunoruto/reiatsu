@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, replace
 from statistics import median
 from typing import Callable
 
 from .tracker import Estimate, Tracker
+
+log = logging.getLogger("reiatsu")
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,7 @@ class Locator:
         self.trackers: dict[str, Tracker] = {}
         self.occupancy: dict[str, bool] = {}
         self.listening: set[str] | None = None  # None: assume every receiver in the plan is online
+        self._warned: set[str] = set()
         self._buf: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
     def reset(self, new_tracker: Callable[[], Tracker] | None, static: set[str] = frozenset()):
@@ -58,8 +62,10 @@ class Locator:
 
     def set_occupancy(self, o: Occupancy):
         self.occupancy[o.area] = o.occupied
-        for t in self.trackers.values():
-            t.set_occupancy(o.area, o.occupied)
+        known = [t.set_occupancy(o.area, o.occupied) for t in self.trackers.values()]
+        if known and not any(known) and o.area not in self._warned:
+            self._warned.add(o.area)
+            log.warning("mmWave area %r is no room or zone of the floor plan; ignored", o.area)
 
     def set_receivers(self, r: Receivers):
         self.listening = set(r.ids)

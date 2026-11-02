@@ -17,7 +17,7 @@ example the Mosquitto add-on).
 3. *Configure*:
    - **Add a device**: a friendly name plus an iPhone IRK (hex or base64, as for *Private BLE Device*) or a fixed MAC. It is published as the slug of the name (`Mirza iPhone` → `mirza_iphone`). The IRK never leaves the config entry.
    - **Name receivers**: one id per Bluetooth scanner. These are the ids you place on the floor plan.
-   - **mmWave sensors**: presence binary sensors, each mapped to a room or zone name from the plan.
+   - **mmWave sensors**: presence binary sensors, each mapped to a room or zone name from the plan. The name must match exactly. An area the plan doesn't have (or a room you renamed later) is ignored, with a warning in the daemon log.
 
 The bridge only reads from Home Assistant's Bluetooth manager, so Bermuda and *Private BLE
 Device* keep working.

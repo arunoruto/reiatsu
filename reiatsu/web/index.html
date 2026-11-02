@@ -756,10 +756,11 @@ $("#panel").addEventListener("change", async (e) => {
   else if (act === "survey-device") { surveyDevice = t.value; store.set("reiatsu.surveyDevice", t.value); }
   else if (act === "held") {
     held = t.value; store.set("reiatsu.held", t.value);
-    // a phone lying still advertises less once its screen locks: give it longer
-    if (held === "surface" && +store.get("reiatsu.seconds", 30) < 45) { store.set("reiatsu.seconds", 45); renderPanel(); }
+    // a phone lying still advertises less once its screen locks: give it longer, and undo that on switching back
+    if (held === "surface" && +store.get("reiatsu.seconds", 30) < 45) { store.set("reiatsu.seconds", 45); store.set("reiatsu.secondsAuto", "1"); renderPanel(); }
+    else if (held !== "surface" && store.get("reiatsu.secondsAuto", "") === "1") { store.set("reiatsu.seconds", 30); store.set("reiatsu.secondsAuto", ""); renderPanel(); }
   }
-  else if (act === "seconds") store.set("reiatsu.seconds", t.value);
+  else if (act === "seconds") { store.set("reiatsu.seconds", t.value); store.set("reiatsu.secondsAuto", ""); }
   else if (act === "heat") { showHeat = t.checked; drawLive(); }
   else if (act === "max-gap") { plan.max_gap = +t.value || 0.4; changed({ rooms: false }); }
   else if (act === "rename") { if (renameRoom(sel, t.value.trim())) { sel = t.value.trim(); changed(); } else renderPanel(); }

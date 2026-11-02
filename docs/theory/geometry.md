@@ -23,9 +23,13 @@ override: two rooms name their shared wall, one room names its exterior walls.
 ## Doors
 
 A door `{rooms, at, width}` cuts a gap of `width` into the wall between its rooms,
-centred at the projection of `at` onto the nearest shared wall segment (`cut_door`). With
-one room it is a door to the outside: a gap in that room's exterior wall, with no effect
-on motion.
+centred at the projection of `at` onto the nearest shared wall segment (`cut_door`).
+Without `at`, the door goes in the middle of the longest shared wall. With one room it is
+a door to the outside: a gap in that room's exterior wall, with no effect on motion.
+
+`extra_walls: [{a: [x, y], b: [x, y], material}]` adds walls that aren't on a room edge,
+such as a glass partition inside a room. They attenuate like any wall but belong to no
+room, so they don't block motion.
 
 ## Walkable grid
 
