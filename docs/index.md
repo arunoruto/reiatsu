@@ -33,6 +33,7 @@ theory/calibration
 theory/learning
 theory/simulation
 theory/limitations
+references
 ```
 
 ```{toctree}

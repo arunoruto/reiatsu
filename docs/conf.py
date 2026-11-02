@@ -19,7 +19,10 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx_copybutton",
     "sphinxcontrib.mermaid",
+    "sphinxcontrib.bibtex",
 ]
+bibtex_bibfiles = ["references.bib"]
+bibtex_reference_style = "author_year"
 myst_enable_extensions = ["dollarmath", "amsmath", "colon_fence", "deflist"]
 myst_heading_anchors = 3
 myst_fence_as_directive = ["mermaid"]

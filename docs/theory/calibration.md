@@ -10,7 +10,8 @@ residual map for what the physics misses. In the web UI it runs from
 
 **Survey points.** At a known position $\mathbf{x}_i$, the phone advertises for about
 30 s while the person turns once. For each receiver, Reiatsu keeps the **censored median**
-over all adverts *sent* (`censored_median`). The unheard ones were either dropped at
+over all adverts *sent* (`censored_median`), treating the unheard ones as censored
+observations {cite:p}`tobin1958`. The unheard ones were either dropped at
 random (probability $p_\text{drop}$) or below sensitivity, so they rank at the bottom.
 With $N$ adverts sent and the heard values sorted in descending order $v_{(1)} \ge v_{(2)} \ge \dots$,
 
@@ -55,8 +56,8 @@ e_j^\text{prior} = \frac{\theta_j - m_j}{s_j}
 $$
 
 with $\sigma_\text{fit} = 3$ dB. A censored observation only penalises predictions above
-the sensitivity. The estimate minimises the Huber loss over all residuals (Huber 1964;
-`scipy.optimize.least_squares(loss="huber", f_scale=1)`):
+the sensitivity. The estimate minimises the Huber loss {cite:p}`huber1964` over all residuals
+(`scipy.optimize.least_squares(loss="huber", f_scale=1)`):
 
 $$
 \hat\theta = \arg\min_{\theta \in \Theta} \sum_i h(e_i) + \sum_j h(e^\text{prior}_j),
@@ -73,9 +74,10 @@ likely cell in that room and refitted with weight 0.3 (`WeakLabel`).
 ## Residual map
 
 What the walls-and-distance model can't explain (furniture, a metal cabinet) is learned
-per receiver by a Gaussian process on the reference group's residuals
-$\varepsilon_i = \tilde y_{ir} - \hat\mu_r(\mathbf{x}_i)$ (`ResidualGP`; Rasmussen &
-Williams 2006):
+per receiver by Gaussian-process regression {cite:p}`rasmussen2006` on the reference
+group's residuals $\varepsilon_i = \tilde y_{ir} - \hat\mu_r(\mathbf{x}_i)$
+(`ResidualGP`). This makes the model a hybrid: a physical model, plus RSSI fingerprints
+measured at known spots, the approach introduced by RADAR {cite:p}`bahl2000`.
 
 $$
 k_\text{GP}(\mathbf{x}, \mathbf{x}') = s_f^2 \exp\!\left(-\frac{\lVert \mathbf{x} - \mathbf{x}' \rVert^2}{2\eta^2}\right),

@@ -12,7 +12,7 @@ The truth (`make_truth`) differs from the priors the way a real home would:
 - $P_{0,r}$ = prior $+\ \mathcal{U}(-5, 5)$, $n \sim \mathcal{U}(1.8, 2.6)$, $L_m$ = prior mean $\times\ \mathcal{U}(0.6, 1.5)$, a node-link offset $\mathcal{U}(-6, 6)$ dB;
 - a spatially correlated **shadowing field** per receiver: 40 Gaussian bumps of length 1 m, scaled to sd 3 dB. The channel model doesn't know about it; the GP should learn it;
 - **body shadowing** $12\,(1 - \cos\varphi)/2$ dB, where $\varphi$ is the angle between the way the person faces and the receiver;
-- **fading** $\mathcal{N}(0, 5^2)$, rounded to whole dBm; heard if $\ge -100$ dBm and not dropped ($p_\text{drop} = 0.1$).
+- **fading** $\mathcal{N}(0, 5^2)$ in dB, i.e. log-normal {cite:p}`rappaport2002`, rounded to whole dBm; heard if $\ge -100$ dBm and not dropped ($p_\text{drop} = 0.1$).
 
 A person walks (`walk`) from room to room through the doors at 0.6–1.2 m/s, staying
 $\max(20, \text{Exp}(180))$ s in each. The phone alternates between **awake** (mean 90 s,

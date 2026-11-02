@@ -2,8 +2,10 @@
 
 Code: {py:class}`reiatsu.tracker.Tracker`, {py:class}`reiatsu.locator.Locator`.
 
-Each device has its own grid HMM: a belief $b_t(c)$ over the walkable cells, advanced
-once per second (`Locator.tick` → `Tracker.step`). The state is the cell, with a
+Each device has its own grid-based hidden Markov model {cite:p}`rabiner1989`, the
+grid form of the Bayes filter used for location estimation {cite:p}`fox2003,thrun2005`:
+a belief $b_t(c)$ over the walkable cells, advanced once per second
+(`Locator.tick` → `Tracker.step`). The state is the cell, with a
 discrete transmit offset marginalised alongside.
 
 ## Prediction: door-constrained motion

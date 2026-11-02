@@ -85,6 +85,7 @@
                 myst-parser
                 sphinx-copybutton
                 sphinxcontrib-mermaid
+                sphinxcontrib-bibtex
               ]
             ))
           ];

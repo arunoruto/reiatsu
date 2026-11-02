@@ -4,8 +4,10 @@ Code: {py:mod}`reiatsu.channel`.
 
 ## Expected RSSI
 
-The expected RSSI of the device in cell $c$, as heard by receiver $r$, is a multi-wall
-log-distance model (Motley–Keenan / COST 231 multi-wall):
+The expected RSSI of the device in cell $c$, as heard by receiver $r$, is the
+log-distance path-loss model {cite:p}`rappaport2002` with an attenuation term per
+crossed wall, the multi-wall model of {cite:t}`motley1988` that was adopted in COST 231
+{cite:p}`cost231`:
 
 $$
 \mu_r(c) = P_{0,r} - 10\, n \log_{10} \max\big(d_r(c),\, d_\text{min}\big) - \sum_m W_m(r, c)\, L_m
@@ -42,7 +44,9 @@ $$ (eq-likelihood)
 
 (`Likelihood.__call__`). $t_\nu$ and $F_\nu$ are the Student-t density and CDF with
 $\nu = 4$; $\sigma = 6$ dB, $s = -100$ dBm and $p_\text{drop} = 0.1$. The heavy tails keep
-body shadowing and multipath outliers from dominating. The "not heard" term is real
+body shadowing and multipath outliers from dominating, the usual reason for a Student-t
+error model {cite:p}`lange1989`. The not-heard case is a censored observation: the value
+is only known to lie below the sensitivity {cite:p}`tobin1958`. The "not heard" term is real
 evidence: a receiver predicted to hear the device at −70 dBm that hears nothing makes that
 cell unlikely. Silence only counts from receivers that are **online**, i.e. listed on
 `reiatsu/receivers` (`Tracker.set_listening`). An offline proxy says nothing.
