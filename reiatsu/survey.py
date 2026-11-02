@@ -65,6 +65,10 @@ def to_point(entry: dict, receivers: list[str]) -> SurveyPoint:
     return p
 
 
+class Busy(ValueError):
+    """A capture is already running (HTTP 409)."""
+
+
 class Survey:
     """Survey file plus the capture in progress; ``on_advert`` runs in the tracking thread."""
 
@@ -72,6 +76,7 @@ class Survey:
         self.path = folder / SURVEY
         self.entries: list[dict] = json.loads(self.path.read_text()) if self.path.exists() else []
         self.capture: Capture | None = None
+        self.last: dict | None = None
         self.recent: dict[str, deque] = {}  # device -> (receipt time, receiver, rssi)
         self.lock = threading.Lock()
 
@@ -86,27 +91,45 @@ class Survey:
         if not device:
             raise ValueError("pick the device you are holding")
         with self.lock:
-            self.capture = Capture(device, float(x), float(y), held, float(seconds), time.time())
+            self._finish()
+            if self.capture:
+                raise Busy(f"a capture of {self.capture.device} is running ({self.capture.t_end - time.time():.0f} s left); cancel it first")
+            self.capture, self.last = Capture(device, float(x), float(y), held, float(seconds), time.time()), None
+        # saves on time even if nobody polls status (UI closed, phone locked)
+        t = threading.Timer(float(seconds) + 0.05, self.finish)
+        t.daemon = True
+        t.start()
 
     def cancel(self):
         with self.lock:
-            self.capture = None
+            self.capture = self.last = None
+
+    def finish(self):
+        with self.lock:
+            self._finish()
+
+    def _finish(self):
+        """Save the capture once its time is up; the result stays in ``last`` (lock held)."""
+        c = self.capture
+        if c is None or time.time() < c.t_end:
+            return
+        self.capture = None
+        if not any(c.samples.values()):
+            self.last = {"done": True, "saved": False, "error": f"no adverts from {c.device} were heard"}
+            return
+        entry = asdict(c) | {"id": str(int(c.t_start * 1000)), "t_end": c.t_end}
+        self.entries.append(entry)
+        self._write()
+        few = sorted(r for r, v in c.samples.items() if 0 < len(v) < FEW_ADVERTS)
+        self.last = {"done": True, "saved": True, "id": entry["id"], "few": few}
 
     def status(self, receivers: list[str]) -> dict | None:
-        """The capture in progress; once its time is up it is saved and reported as done."""
+        """The capture in progress, else the last one's result until the next start or cancel."""
         with self.lock:
+            self._finish()
             c = self.capture
             if c is None:
-                return None
-            if time.time() >= c.t_end:
-                self.capture = None
-                entry = asdict(c) | {"id": str(int(c.t_start * 1000)), "t_end": c.t_end}
-                if not any(c.samples.values()):
-                    return {"done": True, "saved": False, "error": f"no adverts from {c.device} were heard"}
-                self.entries.append(entry)
-                self._write()
-                few = sorted(r for r in receivers if 0 < len(c.samples.get(r, [])) < FEW_ADVERTS)
-                return {"done": True, "saved": True, "id": entry["id"], "few": few}
+                return self.last
             samples = {r: list(v) for r, v in c.samples.items()}
         per_rx = {r: {"n": len(samples.get(r, [])), "median": float(np.median(samples[r])) if samples.get(r) else None} for r in sorted(set(receivers) | set(samples))}
         return {

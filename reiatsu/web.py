@@ -38,7 +38,7 @@ import yaml
 from .calibrate import Calibration, fit
 from .channel import LOSS_PRIOR, ChannelParams
 from .plan import load_plan, make_grid
-from .survey import CALIBRATION, Survey, evaluate, leave_one_out, load_calibration, next_target, residuals, save_calibration
+from .survey import CALIBRATION, Busy, Survey, evaluate, leave_one_out, load_calibration, next_target, residuals, save_calibration
 
 log = logging.getLogger("reiatsu.web")
 STATIC = resources.files("reiatsu") / "web"
@@ -255,7 +255,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self._json(fn())
         except (ValueError, KeyError, TypeError, yaml.YAMLError) as err:
-            self._json({"error": f"{type(err).__name__}: {err}" if not isinstance(err, ValueError) else str(err)}, 400)
+            self._json({"error": f"{type(err).__name__}: {err}" if not isinstance(err, ValueError) else str(err)}, 409 if isinstance(err, Busy) else 400)
 
     def do_POST(self):
         if self.path == "/api/preview":

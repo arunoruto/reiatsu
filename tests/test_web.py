@@ -169,6 +169,16 @@ def test_survey_capture_guidance_and_calibration(tmp_path):
     time.sleep(0.35)
     assert call("api/survey/capture")[1]["capture"] == {"done": True, "saved": True, "id": app.survey.entries[0]["id"], "few": ["kitchen"]}
     assert call(f"api/survey/{app.survey.entries[0]['id']}", "DELETE")[1] == {"deleted": True}
+
+    # saved on time without polling; a running capture can't be overwritten
+    assert call("api/survey/start", "POST", {"device": "phone", "x": 1.0, "y": 1.5, "seconds": 0.3})[0] == 200
+    app.survey.on_advert(Advert(0, "kitchen", "phone", -60), time.time())
+    assert call("api/survey/start", "POST", {"device": "phone", "x": 2.0, "y": 1.5})[0] == 409
+    time.sleep(0.5)
+    entry = json.loads((tmp_path / "survey.json").read_text())[0]
+    assert (entry["x"], entry["samples"]) == (1.0, {"kitchen": [-60]})
+    assert call("api/survey/capture")[1]["capture"]["id"] == entry["id"]  # result kept until next start/cancel
+    assert call(f"api/survey/{entry['id']}", "DELETE")[1] == {"deleted": True}
     assert call("api/calibrate", "POST")[0] == 400  # not enough points
 
     # a simulated survey of the starter targets, raw samples as the capture stores them

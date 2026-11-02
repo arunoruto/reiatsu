@@ -174,7 +174,7 @@ badge.addTo(map);
 async function api(path, opts = {}) {
   const r = await fetch(path, opts);
   const j = await r.json();
-  if (!r.ok) throw new Error(j.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { status: r.status });
   return j;
 }
 
@@ -921,21 +921,28 @@ async function startCapture() {
     const seconds = +store.get("reiatsu.seconds", 30) || 30;
     await api("api/survey/start", { method: "POST", body: JSON.stringify({ device: surveyDevice, x: here[0], y: here[1], seconds, held }) });
     capture = { done: false, device: surveyDevice, remaining: seconds, receivers: {}, silent: [] };
-    renderPanel(); drawSurvey();
-    captureTimer = setInterval(async () => {
-      try {
-        const { capture: c } = await api("api/survey/capture");
-        if (!c || c.done) {
-          stopCapture();
-          flash(c?.saved ? (c.few?.length ? `Point saved, but few adverts from ${c.few.join(", ")}: keep the screen on` : "Point saved") : c?.error || "Capture ended", !c?.saved || !!c.few?.length);
-          if (navigator.vibrate) navigator.vibrate(200);
-          loadSurvey();
-          return;
-        }
-        capture = c; renderPanel();
-      } catch (err) { flash(err.message, true); }
-    }, 500);
-  } catch (err) { flash(err.message, true); }
+    renderPanel(); drawSurvey(); followCapture();
+  } catch (err) {
+    flash(err.message, true);
+    if (err.status === 409) followCapture();  // started elsewhere or before a reload: show it so it can be cancelled
+  }
+}
+
+function followCapture() {
+  clearInterval(captureTimer);
+  captureTimer = setInterval(async () => {
+    try {
+      const { capture: c } = await api("api/survey/capture");
+      if (!c || c.done) {
+        stopCapture();
+        flash(c?.saved ? (c.few?.length ? `Point saved, but few adverts from ${c.few.join(", ")}: keep the screen on` : "Point saved") : c?.error || "Capture ended", !c?.saved || !!c.few?.length);
+        if (navigator.vibrate) navigator.vibrate(200);
+        loadSurvey();
+        return;
+      }
+      capture = c; renderPanel();
+    } catch (err) { flash(err.message, true); }
+  }, 500);
 }
 
 function stopCapture() { clearInterval(captureTimer); capture = null; renderPanel(); drawSurvey(); }
